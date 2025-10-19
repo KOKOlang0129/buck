@@ -13,10 +13,12 @@ export default defineConfig({
   server: {
     port: 3001,
     open: true,
-    allowedHosts: ['arwr.net'],
+    host: true,
+    allowedHosts: ['arwr.net', 'localhost', '127.0.0.1'],
   },
   preview: {
-    allowedHosts: ['arwr.net'],
+    host: true,
+    allowedHosts: ['arwr.net', 'localhost', '127.0.0.1'],
   },
   build: {
     outDir: 'dist',
