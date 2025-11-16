@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
 import { Input } from '@/components/ui/Input'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { mockDataService } from '@/services/mockDataService'
 import { useAuth } from '@/components/providers/MockAuthProvider'
 import { 
@@ -161,20 +162,20 @@ export const ScenarioEditor: React.FC<ScenarioEditorProps> = ({
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
+    <div className="max-w-5xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">シナリオエディター</h1>
-        <div className="flex space-x-2">
-          <Button variant="outline" onClick={copyToClipboard}>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">シナリオエディター</h1>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={copyToClipboard} className="flex-1 sm:flex-none">
             <Copy className="h-4 w-4 mr-2" />
             コピー
           </Button>
-          <Button variant="outline" onClick={exportContent}>
+          <Button variant="outline" size="sm" onClick={exportContent} className="flex-1 sm:flex-none">
             <Download className="h-4 w-4 mr-2" />
             エクスポート
           </Button>
-          <Button onClick={handleSave}>
+          <Button size="sm" onClick={handleSave} className="flex-1 sm:flex-none">
             <Save className="h-4 w-4 mr-2" />
             保存
           </Button>
@@ -238,10 +239,10 @@ export const ScenarioEditor: React.FC<ScenarioEditorProps> = ({
       </div>
 
       {/* AI Completion */}
-      <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-4 rounded-lg">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-gradient-to-r from-purple-50 via-blue-50 to-indigo-50 p-6 rounded-xl border border-purple-100 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-4">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-            <Sparkles className="h-5 w-5 mr-2 text-purple-600" />
+            <Sparkles className="h-5 w-5 mr-2 text-purple-600 animate-pulse" />
             AI補完
           </h3>
           <Button
@@ -249,23 +250,36 @@ export const ScenarioEditor: React.FC<ScenarioEditorProps> = ({
             size="sm"
             onClick={() => generateAICompletion()}
             disabled={isGenerating}
+            className="w-full sm:w-auto"
           >
-            {isGenerating ? '生成中...' : '続きを生成'}
+            {isGenerating ? (
+              <>
+                <LoadingSpinner size="sm" className="mr-2" />
+                生成中...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-4 w-4 mr-2" />
+                続きを生成
+              </>
+            )}
           </Button>
         </div>
         
         {aiSuggestions.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-sm text-gray-600">以下の提案から選択してください：</p>
-            {aiSuggestions.map((suggestion, index) => (
-              <div
-                key={index}
-                className="ai-suggestion cursor-pointer"
-                onClick={() => insertSuggestion(suggestion)}
-              >
-                {suggestion}
-              </div>
-            ))}
+          <div className="space-y-3 mt-4">
+            <p className="text-sm font-medium text-gray-700">以下の提案から選択してください：</p>
+            <div className="grid gap-3">
+              {aiSuggestions.map((suggestion, index) => (
+                <div
+                  key={index}
+                  className="bg-white p-4 rounded-lg border-2 border-purple-200 hover:border-purple-400 cursor-pointer transition-all shadow-sm hover:shadow-md"
+                  onClick={() => insertSuggestion(suggestion)}
+                >
+                  <p className="text-gray-800 leading-relaxed">{suggestion}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

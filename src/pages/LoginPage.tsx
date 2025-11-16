@@ -3,12 +3,12 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/components/providers/MockAuthProvider'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { BookOpen, Eye, EyeOff } from 'lucide-react'
+import { Alert } from '@/components/ui/Alert'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 
 const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -23,105 +23,86 @@ const LoginPage: React.FC = () => {
     try {
       await signIn(email, password)
       navigate('/dashboard')
-    } catch (error: any) {
-      setError(error.message || 'ログインに失敗しました')
+    } catch (err: any) {
+      setError(err.message || 'ログインに失敗しました')
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        {/* Header */}
-        <div className="text-center">
-          <div className="flex justify-center">
-            <BookOpen className="h-12 w-12 text-primary-600" />
-          </div>
-          <h2 className="mt-6 text-3xl font-extrabold text-gray-900">
-            アカウントにログイン
-          </h2>
-          <p className="mt-2 text-sm text-gray-600">
-            または{' '}
-            <Link to="/register" className="font-medium text-primary-600 hover:text-primary-500">
-              新規アカウントを作成
-            </Link>
-          </p>
-        </div>
+    <div className="min-h-screen bg-white text-gray-900">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <p className="text-sm font-semibold tracking-wide text-gray-600 mb-6">ログイン</p>
 
-        {/* Form */}
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-md text-sm">
-              {error}
-            </div>
-          )}
+        <div className="relative border border-gray-300 rounded-lg bg-white px-6 py-10 sm:px-12 sm:py-14 lg:px-20 lg:py-16 shadow-sm">
+          <h1 className="text-lg font-semibold text-gray-800 mb-12">あるかなライター</h1>
 
-          <div className="space-y-4">
-            <Input
-              label="メールアドレス"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="your@email.com"
-              required
-            />
+          <div className="max-w-sm w-full">
+            {error && (
+              <Alert
+                variant="error"
+                message={error}
+                onClose={() => setError('')}
+                className="mb-6"
+              />
+            )}
 
-            <div className="relative">
+            <form className="space-y-6" onSubmit={handleSubmit}>
+              <Input
+                label="メールアドレス"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="pxr@example.com"
+                required
+              />
+
               <Input
                 label="パスワード"
-                type={showPassword ? 'text' : 'password'}
+                type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="パスワードを入力"
                 required
               />
-              <button
-                type="button"
-                className="absolute right-3 top-8 text-gray-400 hover:text-gray-600"
-                onClick={() => setShowPassword(!showPassword)}
-              >
-                {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-              </button>
-            </div>
-          </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <input
-                id="remember-me"
-                name="remember-me"
-                type="checkbox"
-                className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
-              />
-              <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-900">
-                ログイン状態を保持
-              </label>
-            </div>
+              <Button type="submit" className="w-full" disabled={isLoading}>
+                {isLoading ? (
+                  <>
+                    <LoadingSpinner size="sm" className="mr-2" />
+                    ログイン中...
+                  </>
+                ) : (
+                  'ログイン'
+                )}
+              </Button>
+            </form>
 
-            <div className="text-sm">
-              <a href="#" className="font-medium text-primary-600 hover:text-primary-500">
-                パスワードを忘れましたか？
+            <div className="mt-4 text-sm">
+              <a href="#" className="text-gray-700 underline hover:text-gray-900">
+                パスワード忘れた方はこちら
               </a>
             </div>
           </div>
 
-          <div>
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading}
-            >
-              {isLoading ? 'ログイン中...' : 'ログイン'}
-            </Button>
+          <div className="mt-24 sm:mt-28 flex flex-col items-center space-y-2 text-sm text-gray-600">
+            <Link to="#" className="underline hover:text-gray-800">
+              アルカナライター テスター希望はこちら
+            </Link>
+            <Link to="#" className="underline hover:text-gray-800">
+              利用規約
+            </Link>
+            <p className="text-xs uppercase tracking-wide">PxR LLC.</p>
           </div>
 
-          <div className="text-center">
-            <Link to="/" className="text-sm text-gray-600 hover:text-gray-500">
-              ホームに戻る
-            </Link>
-          </div>
-        </form>
+          <Link
+            to="#"
+            className="absolute left-6 bottom-6 text-xs text-gray-500 underline hover:text-gray-700"
+          >
+            フォームへリンク
+          </Link>
+        </div>
       </div>
     </div>
   )

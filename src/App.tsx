@@ -10,7 +10,7 @@ import RegisterPage from '@/pages/RegisterPage'
 function App() {
   return (
     <AuthProvider>
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      <div className="min-h-screen bg-white">
         <Routes>
           {/* Public routes */}
           <Route path="/" element={<Layout />}>
