@@ -31,14 +31,12 @@ const LoginPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        <p className="text-sm font-semibold tracking-wide text-gray-600 mb-6">ログイン</p>
+    <div className="min-h-screen bg-white text-gray-900 flex items-center justify-center">
+      <div className="w-full max-w-md px-4 sm:px-6 lg:px-8">
+        <div className="border border-gray-300 rounded-lg bg-white px-6 py-10 sm:px-12 sm:py-14 shadow-sm">
+          <h1 className="text-lg font-semibold text-gray-800 mb-12 text-center">あるかなライター</h1>
 
-        <div className="relative border border-gray-300 rounded-lg bg-white px-6 py-10 sm:px-12 sm:py-14 lg:px-20 lg:py-16 shadow-sm">
-          <h1 className="text-lg font-semibold text-gray-800 mb-12">あるかなライター</h1>
-
-          <div className="max-w-sm w-full">
+          <div className="w-full">
             {error && (
               <Alert
                 variant="error"
@@ -79,7 +77,7 @@ const LoginPage: React.FC = () => {
               </Button>
             </form>
 
-            <div className="mt-4 text-sm">
+            <div className="mt-4 text-sm text-center">
               <a href="#" className="text-gray-700 underline hover:text-gray-900">
                 パスワード忘れた方はこちら
               </a>
@@ -96,12 +94,14 @@ const LoginPage: React.FC = () => {
             <p className="text-xs uppercase tracking-wide">PxR LLC.</p>
           </div>
 
-          <Link
-            to="#"
-            className="absolute left-6 bottom-6 text-xs text-gray-500 underline hover:text-gray-700"
-          >
-            フォームへリンク
-          </Link>
+          <div className="mt-6 text-center">
+            <Link
+              to="#"
+              className="text-xs text-gray-500 underline hover:text-gray-700"
+            >
+              フォームへリンク
+            </Link>
+          </div>
         </div>
       </div>
     </div>

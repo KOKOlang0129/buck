@@ -169,6 +169,22 @@ export const whitelistAPI = {
 };
 
 /**
+ * AIテキスト生成API
+ */
+export const aiAPI = {
+  /**
+   * テキスト生成
+   */
+  generateText: async (prompt: string, provider: 'openai' | 'claude' = 'openai') => {
+    const response = await apiRequest('/api/ai/generate', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, provider }),
+    });
+    return response.json();
+  },
+};
+
+/**
  * ヘルスチェック
  */
 export const healthCheck = async () => {
