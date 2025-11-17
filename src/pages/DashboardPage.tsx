@@ -6,7 +6,6 @@ import { SettingsModal, SettingsData } from '@/components/SettingsModal'
 import { PromptInputModal } from '@/components/PromptInputModal'
 import { DictionaryInputModal } from '@/components/DictionaryInputModal'
 import { mockDataService, Scenario } from '@/services/mockDataService'
-import { aiAPI } from '@/lib/api'
 import { Plus, Settings, LogOut, Search, ChevronRight, X, Minus } from 'lucide-react'
 
 const VIEW_MODES = ['outline', 'plain', 'preview', 'markdown'] as const
@@ -266,10 +265,6 @@ const DashboardPage: React.FC = () => {
     setShowProofreadMode(true)
   }
 
-  const handleCloseProofreadMode = () => {
-    setShowProofreadMode(false)
-  }
-
   const handleUpdatePanelTitle = (id: string, newTitle: string) => {
     setCustomPanels(customPanels.map(panel => 
       panel.id === id ? { ...panel, title: newTitle } : panel
@@ -278,15 +273,6 @@ const DashboardPage: React.FC = () => {
 
   const handleRemovePanel = (id: string) => {
     setCustomPanels(customPanels.filter(panel => panel.id !== id))
-  }
-
-  const handleAddCustomPanel = () => {
-    const newPanel = {
-      id: `panel-${Date.now()}`,
-      title: '新しいパネル',
-      content: ''
-    }
-    setCustomPanels([...customPanels, newPanel])
   }
 
   const outlineItems = React.useMemo(() => {
@@ -582,6 +568,16 @@ const DashboardPage: React.FC = () => {
           {/* Action Panel / Tag Manager / Dictionary Manager / Proofread Mode */}
           {showProofreadMode ? (
             <aside className="border border-gray-300 bg-white rounded-lg p-4 flex flex-col h-[794px] space-y-3">
+              <div className="flex items-center justify-between border-b border-gray-200 pb-2">
+                <h3 className="text-sm font-semibold text-gray-700">校正モード</h3>
+                <button
+                  onClick={() => setShowProofreadMode(false)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  aria-label="校正モードを閉じる"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
               {/* Custom Panels */}
               {customPanels.map((panel) => (
                 <div key={panel.id} className="border border-gray-300 rounded-md bg-white">
