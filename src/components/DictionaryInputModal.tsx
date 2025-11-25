@@ -6,45 +6,62 @@
 import React, { useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Textarea } from '@/components/ui/Textarea'
+import { Input } from '@/components/ui/Input'
 import { X, ArrowRight } from 'lucide-react'
 
 interface DictionaryInputModalProps {
   isOpen: boolean
   onClose: () => void
-  onSave: (text: string) => void
-  onNext?: (text: string) => void
+  onSave: (entry: { term: string; description: string }) => void
+  onNext?: (entry: { term: string; description: string }) => void
+  mode?: 'create' | 'edit'
+  initialEntry?: { term: string; description: string }
 }
 
 export const DictionaryInputModal: React.FC<DictionaryInputModalProps> = ({
   isOpen,
   onClose,
   onSave,
-  onNext
+  onNext,
+  mode = 'create',
+  initialEntry
 }) => {
-  const [inputText, setInputText] = useState('')
+  const [term, setTerm] = useState('')
+  const [description, setDescription] = useState('')
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setTerm(initialEntry?.term ?? '')
+      setDescription(initialEntry?.description ?? '')
+    }
+  }, [isOpen, initialEntry])
 
   const handleSave = () => {
-    if (inputText.trim()) {
-      onSave(inputText)
-      setInputText('')
+    if (term.trim() && description.trim()) {
+      onSave({ term, description })
+      setTerm('')
+      setDescription('')
       onClose()
     }
   }
 
   const handleNext = () => {
-    if (inputText.trim()) {
-      if (onNext) {
-        onNext(inputText)
-        setInputText('')
-        onClose()
-      } else {
-        handleSave()
-      }
+    if (mode === 'edit' || !onNext) {
+      handleSave()
+      return
+    }
+
+    if (term.trim() && description.trim()) {
+      onNext({ term, description })
+      setTerm('')
+      setDescription('')
+      onClose()
     }
   }
 
   const handleClose = () => {
-    setInputText('')
+    setTerm('')
+    setDescription('')
     onClose()
   }
 
@@ -52,7 +69,7 @@ export const DictionaryInputModal: React.FC<DictionaryInputModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-blue-50 border-2 border-red-500 rounded-lg shadow-xl w-full max-w-2xl mx-4 p-6 relative">
+      <div className="bg-blue-50 rounded-lg shadow-xl w-full max-w-2xl mx-4 p-6 relative">
         {/* Close button */}
         <button
           onClick={handleClose}
@@ -63,19 +80,33 @@ export const DictionaryInputModal: React.FC<DictionaryInputModalProps> = ({
         </button>
 
         {/* Title */}
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Note</h2>
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">
+          {mode === 'edit' ? '辞書エントリの編集' : '辞書エントリの追加'}
+        </h2>
 
         {/* Input Area */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            プロンプト入力・自由テキスト入力
-          </label>
-          <Textarea
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder="プロンプトまたは自由テキストを入力してください..."
-            className="w-full min-h-[300px] text-base resize-none bg-blue-50"
-          />
+        <div className="space-y-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              用語
+            </label>
+            <Input
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="例: 魔法石"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              詳細
+            </label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="用語の説明や背景を入力してください..."
+              className="w-full min-h-[220px] text-base resize-none bg-blue-50"
+            />
+          </div>
         </div>
 
         {/* Action Buttons */}
@@ -84,17 +115,19 @@ export const DictionaryInputModal: React.FC<DictionaryInputModalProps> = ({
             onClick={handleSave}
             variant="outline"
             className="flex-1 border border-gray-300 hover:border-gray-400"
-            disabled={!inputText.trim()}
+            disabled={!term.trim() || !description.trim()}
           >
-            テキストを保存
+            {mode === 'edit' ? '更新する' : 'テキストを保存'}
           </Button>
-          <Button
-            onClick={handleNext}
-            className="flex-1 border-2 border-red-500 hover:border-red-600"
-            disabled={!inputText.trim()}
-          >
-            <ArrowRight className="h-4 w-4 mr-2" />
-          </Button>
+          {mode === 'create' && onNext && (
+            <Button
+              onClick={handleNext}
+              className="flex-1"
+              disabled={!term.trim() || !description.trim()}
+            >
+              <ArrowRight className="h-4 w-4 mr-2" />
+            </Button>
+          )}
         </div>
       </div>
     </div>

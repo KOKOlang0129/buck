@@ -1,3 +1,10 @@
+export interface DictionaryEntry {
+  id: string
+  term: string
+  description: string
+  createdAt: Date
+}
+
 export interface Scenario {
   id: string
   title: string
@@ -7,6 +14,7 @@ export interface Scenario {
   tags: string[]
   isPublic: boolean
   authorId: string
+  dictionaryEntries?: DictionaryEntry[]
 }
 
 export interface UserProfile {
@@ -48,7 +56,8 @@ const mockScenarios: Scenario[] = [
     updatedAt: new Date('2024-01-20'),
     tags: ['冒険', 'ファンタジー', '魔法'],
     isPublic: true,
-    authorId: 'mock-user-id'
+    authorId: 'mock-user-id',
+    dictionaryEntries: []
   },
   {
     id: '2',
@@ -64,7 +73,8 @@ const mockScenarios: Scenario[] = [
     updatedAt: new Date('2024-01-18'),
     tags: ['ミステリー', '古代', '考古学'],
     isPublic: false,
-    authorId: 'mock-user-id'
+    authorId: 'mock-user-id',
+    dictionaryEntries: []
   },
   {
     id: '3',
@@ -80,7 +90,8 @@ const mockScenarios: Scenario[] = [
     updatedAt: new Date('2024-01-12'),
     tags: ['SF', '宇宙', '冒険'],
     isPublic: true,
-    authorId: 'mock-user-id'
+    authorId: 'mock-user-id',
+    dictionaryEntries: []
   }
 ]
 
@@ -98,9 +109,12 @@ class MockDataService {
   }
 
   // Create a new scenario
-  createScenario(scenario: Omit<Scenario, 'id' | 'createdAt' | 'updatedAt'>): string {
+  createScenario(
+    scenario: Omit<Scenario, 'id' | 'createdAt' | 'updatedAt' | 'dictionaryEntries'> & { dictionaryEntries?: DictionaryEntry[] }
+  ): string {
     const newScenario: Scenario = {
       ...scenario,
+      dictionaryEntries: scenario.dictionaryEntries ?? [],
       id: Date.now().toString(),
       createdAt: new Date(),
       updatedAt: new Date()
@@ -121,6 +135,49 @@ class MockDataService {
       }
       this.saveToLocalStorage()
     }
+  }
+
+  addDictionaryEntry(scenarioId: string, entry: { term: string; description: string }): DictionaryEntry | null {
+    const scenario = this.getScenario(scenarioId)
+    if (!scenario) return null
+    const newEntry: DictionaryEntry = {
+      id: Date.now().toString(),
+      ...entry,
+      createdAt: new Date()
+    }
+    const entries = scenario.dictionaryEntries ?? []
+    scenario.dictionaryEntries = [...entries, newEntry]
+    this.updateScenario(scenarioId, { dictionaryEntries: scenario.dictionaryEntries })
+    return newEntry
+  }
+
+  removeDictionaryEntry(scenarioId: string, entryId: string): void {
+    const scenario = this.getScenario(scenarioId)
+    if (!scenario || !scenario.dictionaryEntries) return
+    scenario.dictionaryEntries = scenario.dictionaryEntries.filter(entry => entry.id !== entryId)
+    this.updateScenario(scenarioId, { dictionaryEntries: scenario.dictionaryEntries })
+  }
+
+  updateDictionaryEntry(
+    scenarioId: string,
+    entryId: string,
+    entry: { term: string; description: string }
+  ): DictionaryEntry | null {
+    const scenario = this.getScenario(scenarioId)
+    if (!scenario || !scenario.dictionaryEntries) return null
+
+    scenario.dictionaryEntries = scenario.dictionaryEntries.map(item =>
+      item.id === entryId
+        ? {
+            ...item,
+            term: entry.term,
+            description: entry.description
+          }
+        : item
+    )
+
+    this.updateScenario(scenarioId, { dictionaryEntries: scenario.dictionaryEntries })
+    return scenario.dictionaryEntries.find(item => item.id === entryId) ?? null
   }
 
   // Delete a scenario
@@ -150,7 +207,11 @@ class MockDataService {
         this.scenarios = parsed.map((s: any) => ({
           ...s,
           createdAt: new Date(s.createdAt),
-          updatedAt: new Date(s.updatedAt)
+          updatedAt: new Date(s.updatedAt),
+          dictionaryEntries: (s.dictionaryEntries ?? []).map((entry: any) => ({
+            ...entry,
+            createdAt: new Date(entry.createdAt)
+          }))
         }))
       } catch (error) {
         console.error('Error loading scenarios from localStorage:', error)

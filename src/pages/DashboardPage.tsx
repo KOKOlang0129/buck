@@ -5,10 +5,14 @@ import { Button } from '@/components/ui/Button'
 import { SettingsModal, SettingsData } from '@/components/SettingsModal'
 import { PromptInputModal } from '@/components/PromptInputModal'
 import { DictionaryInputModal } from '@/components/DictionaryInputModal'
-import { mockDataService, Scenario } from '@/services/mockDataService'
-import { Plus, Settings, LogOut, Search, ChevronRight, X, Minus } from 'lucide-react'
+import { mockDataService, Scenario, DictionaryEntry } from '@/services/mockDataService'
+import { Plus, Settings, LogOut, Search, ChevronRight, ChevronUp, ChevronDown, X, Minus } from 'lucide-react'
+import { renderMarkdownToHtml, MARKDOWN_TEST_SNIPPET, applyDictionaryHighlights } from '@/utils/markdown'
+import { parseOutlineSections, moveSectionInMarkdown } from '@/utils/outline'
 
 const VIEW_MODES = ['outline', 'plain', 'preview', 'markdown'] as const
+const PREVIEW_LAYOUTS = ['edit', 'split', 'preview'] as const
+type PreviewLayout = (typeof PREVIEW_LAYOUTS)[number]
 
 const DEFAULT_PREVIEW_CONTENT = `
 ### 一章　冷たい朝
@@ -50,6 +54,8 @@ const DashboardPage: React.FC = () => {
   const [isLoadingScenarios, setIsLoadingScenarios] = React.useState(true)
   const [selectedScenarioId, setSelectedScenarioId] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<(typeof VIEW_MODES)[number] | null>('plain')
+  const [previewLayout, setPreviewLayout] = React.useState<PreviewLayout>('edit')
+  const lastMarkdownLayoutRef = React.useRef<PreviewLayout>('edit')
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
   const [isPromptInputOpen, setIsPromptInputOpen] = React.useState(false)
   const [editorContent, setEditorContent] = React.useState(DEFAULT_MARKDOWN_CONTENT)
@@ -60,7 +66,8 @@ const DashboardPage: React.FC = () => {
   const [tagPreview, setTagPreview] = React.useState('')
   const [showDictionaryManager, setShowDictionaryManager] = React.useState(false)
   const [isDictionaryInputOpen, setIsDictionaryInputOpen] = React.useState(false)
-  const [dictionaryItems, setDictionaryItems] = React.useState<Array<{ id: string; name: string; description: string }>>([])
+  const [dictionaryItems, setDictionaryItems] = React.useState<DictionaryEntry[]>([])
+  const [editingDictionaryEntry, setEditingDictionaryEntry] = React.useState<DictionaryEntry | null>(null)
   const [showProofreadMode, setShowProofreadMode] = React.useState(false)
   const [customPanels, setCustomPanels] = React.useState<Array<{ id: string; title: string; content: string }>>([
     { id: 'summary', title: 'あらすじ', content: '' },
@@ -94,11 +101,21 @@ const DashboardPage: React.FC = () => {
     if (selectedScenario) {
       setEditorContent(selectedScenario.content)
       setProjectName(selectedScenario.title)
+      setDictionaryItems(selectedScenario.dictionaryEntries ?? [])
     } else {
       setEditorContent('')
       setProjectName('')
+      setDictionaryItems([])
     }
   }, [selectedScenario])
+
+  React.useEffect(() => {
+    if (viewMode === 'preview' && previewLayout !== 'preview') {
+      setPreviewLayout('preview')
+    } else if (viewMode === 'markdown' && previewLayout !== lastMarkdownLayoutRef.current) {
+      setPreviewLayout(lastMarkdownLayoutRef.current)
+    }
+  }, [viewMode, previewLayout])
 
   const handleProjectNameChange = (newName: string) => {
     setProjectName(newName)
@@ -157,6 +174,34 @@ const DashboardPage: React.FC = () => {
         content: newContent
       })
     }
+  }
+
+  const handlePreviewLayoutSelect = (layout: PreviewLayout) => {
+    if (viewMode === 'markdown') {
+      lastMarkdownLayoutRef.current = layout
+      setPreviewLayout(layout)
+      return
+    }
+
+    if (viewMode === 'preview') {
+      if (layout === 'preview') {
+        setPreviewLayout('preview')
+      } else {
+        lastMarkdownLayoutRef.current = layout
+        setViewMode('markdown')
+        setPreviewLayout(layout)
+      }
+      return
+    }
+
+    setViewMode('markdown')
+    lastMarkdownLayoutRef.current = layout
+    setPreviewLayout(layout)
+  }
+
+  const handleInjectMarkdownSample = () => {
+    handleContentChange(MARKDOWN_TEST_SNIPPET)
+    setViewMode('markdown')
   }
 
   const handleAddArticle = () => {
@@ -227,30 +272,54 @@ const DashboardPage: React.FC = () => {
   }
 
   const handleAddDictionary = () => {
-    if (showDictionaryManager) {
-      // 辞書管理UIが表示されている場合は、モーダルを開く
-      setIsDictionaryInputOpen(true)
-    } else {
-      // 辞書管理UIが表示されていない場合は、辞書管理UIを表示
+    if (!showDictionaryManager) {
       setShowDictionaryManager(true)
     }
+    setEditingDictionaryEntry(null)
+    setIsDictionaryInputOpen(true)
   }
 
-  const handleSaveDictionaryText = (text: string) => {
-    // 辞書テキストを保存する処理（今後実装）
-    console.log('Dictionary text saved:', text)
-  }
-
-  const handleAddDictionaryItem = (text: string) => {
-    // 辞書アイテムを追加（辞書.mdが追加される）
-    const newItem = {
-      id: `dict-${Date.now()}`,
-      name: 'Main',
-      description: text || 'メインの文章について書かれている'
+  const handleAddDictionaryItem = ({ term, description }: { term: string; description: string }) => {
+    if (!selectedScenario) return
+    const entry = mockDataService.addDictionaryEntry(selectedScenario.id, { term, description })
+    if (entry) {
+      setDictionaryItems(prev => [...prev, entry])
+      setShowDictionaryManager(true)
+      loadScenarios()
+      setEditingDictionaryEntry(null)
     }
-    setDictionaryItems([...dictionaryItems, newItem])
-    // 辞書管理UIを表示
-    setShowDictionaryManager(true)
+  }
+
+  const handleRemoveDictionaryEntry = (entryId: string) => {
+    if (!selectedScenario) return
+    mockDataService.removeDictionaryEntry(selectedScenario.id, entryId)
+    setDictionaryItems(prev => prev.filter(entry => entry.id !== entryId))
+    loadScenarios()
+  }
+
+  const handleDictionaryModalSave = ({ term, description }: { term: string; description: string }) => {
+    if (!selectedScenario) return
+
+    if (editingDictionaryEntry) {
+      const updated = mockDataService.updateDictionaryEntry(selectedScenario.id, editingDictionaryEntry.id, {
+        term,
+        description
+      })
+      if (updated) {
+        setDictionaryItems(prev => prev.map(item => (item.id === updated.id ? updated : item)))
+        setEditingDictionaryEntry(null)
+        setShowDictionaryManager(true)
+        loadScenarios()
+      }
+      return
+    }
+
+    handleAddDictionaryItem({ term, description })
+  }
+
+  const handleEditDictionaryEntry = (entry: DictionaryEntry) => {
+    setEditingDictionaryEntry(entry)
+    setIsDictionaryInputOpen(true)
   }
 
   const handleCloseDictionaryManager = () => {
@@ -275,36 +344,33 @@ const DashboardPage: React.FC = () => {
     setCustomPanels(customPanels.filter(panel => panel.id !== id))
   }
 
-  const outlineItems = React.useMemo(() => {
-    if (!editorContent) return []
-    const lines = editorContent.split('\n')
-    const headers: Array<{ level: number; text: string; id: string }> = []
-    
-    lines.forEach((line, index) => {
-      const trimmed = line.trim()
-      if (trimmed.startsWith('#')) {
-        const match = trimmed.match(/^(#+)\s+(.+)$/)
-        if (match) {
-          headers.push({
-            level: match[1].length,
-            text: match[2],
-            id: `header-${index}`
-          })
-        }
-      } else if (trimmed.length > 0 && headers.length < 50) {
-        // ヘッダーがない場合は最初の数行を表示
-        if (headers.length === 0 || headers[headers.length - 1].level === 0) {
-          headers.push({
-            level: 0,
-            text: trimmed.substring(0, 50),
-            id: `line-${index}`
-          })
-        }
-      }
+  const outlineSections = React.useMemo(() => parseOutlineSections(editorContent), [editorContent])
+  const renderedMarkdown = React.useMemo(
+    () => renderMarkdownToHtml(editorContent || DEFAULT_PREVIEW_CONTENT),
+    [editorContent]
+  )
+  const dictionaryHighlightedMarkdown = React.useMemo(
+    () => applyDictionaryHighlights(renderedMarkdown, dictionaryItems),
+    [renderedMarkdown, dictionaryItems]
+  )
+  const sectionMovementMap = React.useMemo(() => {
+    const map = new Map<string, { canMoveUp: boolean; canMoveDown: boolean }>()
+    const groups = new Map<number, typeof outlineSections>()
+    outlineSections.forEach((section) => {
+      const existing = groups.get(section.level) ?? []
+      existing.push(section)
+      groups.set(section.level, existing)
     })
-    
-    return headers
-  }, [editorContent])
+    groups.forEach((sections) => {
+      sections.forEach((section, index) => {
+        map.set(section.id, {
+          canMoveUp: index > 0,
+          canMoveDown: index < sections.length - 1
+        })
+      })
+    })
+    return map
+  }, [outlineSections])
 
   const toggleChapter = (id: string) => {
     const newExpanded = new Set(expandedChapters)
@@ -316,43 +382,11 @@ const DashboardPage: React.FC = () => {
     setExpandedChapters(newExpanded)
   }
 
-  // MarkdownをHTMLに変換する関数（シンプルな実装）
-  const renderMarkdown = (text: string): string => {
-    if (!text) return ''
-    
-    let html = text
-      // 見出し
-      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-      // 太字
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/__(.*?)__/g, '<strong>$1</strong>')
-      // 斜体
-      .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/_(.*?)_/g, '<em>$1</em>')
-      // リンク
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-blue-600 hover:underline">$1</a>')
-      // リスト
-      .replace(/^\* (.*$)/gim, '<li>$1</li>')
-      .replace(/^- (.*$)/gim, '<li>$1</li>')
-      .replace(/^\+ (.*$)/gim, '<li>$1</li>')
-      // コードブロック
-      .replace(/```([^`]+)```/g, '<pre class="bg-gray-100 p-2 rounded"><code>$1</code></pre>')
-      // インラインコード
-      .replace(/`([^`]+)`/g, '<code class="bg-gray-100 px-1 rounded">$1</code>')
-      // 改行
-      .replace(/\n/g, '<br />')
-    
-    // リストをulタグで囲む
-    html = html.replace(/(<li>.*<\/li>)/g, (match) => {
-      if (!match.includes('<ul>')) {
-        return '<ul class="list-disc list-inside my-2">' + match + '</ul>'
-      }
-      return match
-    })
-    
-    return html
+  const handleMoveSection = (sectionId: string, direction: 'up' | 'down') => {
+    const updated = moveSectionInMarkdown(editorContent, sectionId, direction)
+    if (updated !== editorContent) {
+      handleContentChange(updated)
+    }
   }
 
   if (isLoadingScenarios) {
@@ -369,7 +403,7 @@ const DashboardPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 text-gray-900">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      <div className="w-full max-w-none mx-auto px-4 sm:px-6 lg:px-12 xl:px-16 py-10">
         {/* Header */}
         <div className="mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -398,7 +432,7 @@ const DashboardPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)_220px] gap-6">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[clamp(220px,18vw,280px)_minmax(0,1fr)_clamp(240px,21vw,360px)]">
           {/* Project List */}
           <aside className="border border-gray-300 bg-white rounded-lg p-4 flex flex-col h-[794px]">
             <h2 className="text-sm font-semibold text-gray-700 mb-4">プロジェクト一覧</h2>
@@ -452,6 +486,34 @@ const DashboardPage: React.FC = () => {
                   </button>
                 ))}
               </div>
+              {(viewMode === 'markdown' || viewMode === 'preview') && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">表示</span>
+                  <div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
+                    {PREVIEW_LAYOUTS.map((layout) => (
+                      <button
+                        key={layout}
+                        type="button"
+                        onClick={() => handlePreviewLayoutSelect(layout)}
+                        className={`px-3 py-1 text-xs font-medium capitalize ${
+                          previewLayout === layout
+                            ? 'bg-gray-900 text-white'
+                            : 'bg-white text-gray-600 hover:bg-gray-100'
+                        }`}
+                      >
+                        {layout === 'edit' ? '編集' : layout === 'split' ? '分割' : 'プレビュー'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={handleInjectMarkdownSample}
+                className="text-xs font-semibold border border-dashed border-gray-300 rounded-md px-3 py-1 text-gray-600 hover:bg-gray-100 transition"
+              >
+                Markdownテスト挿入
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-6 flex-1">
@@ -459,16 +521,50 @@ const DashboardPage: React.FC = () => {
                 <div className="border border-gray-200 rounded-md p-4 bg-gray-50 overflow-auto" style={{ maxHeight: 'calc(794px - 120px)' }}>
                   <h3 className="text-sm font-semibold text-gray-700 mb-3">Outline</h3>
                   <div className="space-y-1 text-sm text-gray-600">
-                    {outlineItems.length > 0 ? (
-                      outlineItems.map((item, index) => (
-                        <div
-                          key={`${item.id}-${index}`}
-                          className={`truncate cursor-pointer hover:bg-gray-100 px-2 py-1 rounded ${item.level === 0 ? 'pl-0' : item.level === 1 ? 'pl-0' : item.level === 2 ? 'pl-4' : 'pl-8'}`}
-                          onClick={() => toggleChapter(item.id)}
-                        >
-                          {item.level > 0 ? `header${item.level}: ` : ''}{item.text}
-                        </div>
-                      ))
+                    {outlineSections.length > 0 ? (
+                      outlineSections.map((item) => {
+                        const movement = sectionMovementMap.get(item.id) ?? { canMoveUp: false, canMoveDown: false }
+                        return (
+                          <div
+                            key={item.id}
+                            className="flex items-center gap-1 group"
+                          >
+                            <button
+                              type="button"
+                              className={`flex-1 text-left truncate hover:bg-gray-100 px-2 py-1 rounded transition ${
+                                item.level <= 1 ? 'pl-0' : item.level === 2 ? 'pl-4' : 'pl-8'
+                              }`}
+                              onClick={() => toggleChapter(item.id)}
+                            >
+                              {item.text}
+                            </button>
+                            <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                type="button"
+                                onClick={() => handleMoveSection(item.id, 'up')}
+                                disabled={!movement.canMoveUp}
+                                className={`p-1 rounded border text-xs ${
+                                  movement.canMoveUp ? 'hover:bg-gray-100 text-gray-600' : 'text-gray-300 cursor-not-allowed'
+                                }`}
+                                aria-label="セクションを上に移動"
+                              >
+                                <ChevronUp className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleMoveSection(item.id, 'down')}
+                                disabled={!movement.canMoveDown}
+                                className={`p-1 rounded border text-xs ${
+                                  movement.canMoveDown ? 'hover:bg-gray-100 text-gray-600' : 'text-gray-300 cursor-not-allowed'
+                                }`}
+                                aria-label="セクションを下に移動"
+                              >
+                                <ChevronDown className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })
                     ) : (
                       <p className="text-gray-400">アウトラインはまだありません。</p>
                     )}
@@ -486,21 +582,57 @@ const DashboardPage: React.FC = () => {
                     </div>
                   ) : viewMode === 'outline' ? (
                     <div className="h-full min-h-[400px] flex flex-col">
-                      {outlineItems.length > 0 ? (
-                        <div className="flex-1">
-                          <div className="space-y-2 text-sm text-gray-700">
-                            {outlineItems.map((item, index) => (
+                      {outlineSections.length > 0 ? (
+                        <div className="flex-1 space-y-3">
+                          {outlineSections.map((item, index) => {
+                            const movement = sectionMovementMap.get(item.id) ?? { canMoveUp: false, canMoveDown: false }
+                            return (
                               <div
                                 key={`outline-main-${item.id}-${index}`}
-                                className="flex gap-4 items-start border border-transparent hover:border-gray-200 rounded px-3 py-1 transition-colors"
+                                className="flex flex-col border border-gray-100 rounded-lg p-3 hover:border-gray-300 transition-colors"
                               >
-                                <span className="text-gray-500 min-w-[3rem]">
-                                  {index + 1}章
-                                </span>
-                                <span className="font-medium">{item.text}</span>
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm font-semibold text-gray-500">
+                                      {index + 1}章
+                                    </span>
+                                    <span className="font-medium text-gray-800">{item.text}</span>
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMoveSection(item.id, 'up')}
+                                      disabled={!movement.canMoveUp}
+                                      className={`p-1 rounded border ${
+                                        movement.canMoveUp
+                                          ? 'hover:bg-gray-100 text-gray-600'
+                                          : 'text-gray-300 cursor-not-allowed opacity-60'
+                                      }`}
+                                      aria-label="上に移動"
+                                    >
+                                      <ChevronUp className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMoveSection(item.id, 'down')}
+                                      disabled={!movement.canMoveDown}
+                                      className={`p-1 rounded border ${
+                                        movement.canMoveDown
+                                          ? 'hover:bg-gray-100 text-gray-600'
+                                          : 'text-gray-300 cursor-not-allowed opacity-60'
+                                      }`}
+                                      aria-label="下に移動"
+                                    >
+                                      <ChevronDown className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">
+                                  レベル: {item.level} / 開始行 {item.startLine + 1}
+                                </p>
                               </div>
-                            ))}
-                          </div>
+                            )
+                          })}
                         </div>
                       ) : (
                         <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
@@ -532,7 +664,7 @@ const DashboardPage: React.FC = () => {
                     <div className="h-full min-h-[400px]">
                       <div
                         className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none"
-                        dangerouslySetInnerHTML={{ __html: renderMarkdown(editorContent || DEFAULT_PREVIEW_CONTENT) }}
+                        dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
                       />
                       <div className="mt-6 pt-4 border-t border-gray-200 text-xs text-gray-500 space-y-1">
                         <p>このツールでは表現できないが、強調表示やリストなど</p>
@@ -542,13 +674,37 @@ const DashboardPage: React.FC = () => {
                     </div>
                   ) : viewMode === 'markdown' ? (
                     <div className="h-full flex flex-col min-h-[400px]">
-                      <textarea
-                        value={editorContent}
-                        onChange={(e) => handleContentChange(e.target.value)}
-                        className="w-full flex-1 text-sm leading-relaxed text-gray-700 font-mono resize-none border-none outline-none"
-                        placeholder="ここにMarkdown形式で内容を入力してください..."
-                        style={{ minHeight: '400px' }}
-                      />
+                      {previewLayout === 'split' ? (
+                        <div className="grid md:grid-cols-2 gap-4 flex-1">
+                          <textarea
+                            value={editorContent}
+                            onChange={(e) => handleContentChange(e.target.value)}
+                            className="w-full h-full text-sm leading-relaxed text-gray-700 font-mono resize-none border border-gray-200 rounded-lg p-3"
+                            placeholder="ここにMarkdown形式で内容を入力してください..."
+                          />
+                          <div className="border border-gray-200 rounded-lg p-3 overflow-auto">
+                            <div
+                              className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none"
+                              dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
+                            />
+                          </div>
+                        </div>
+                      ) : previewLayout === 'preview' ? (
+                        <div className="flex-1 border border-gray-200 rounded-lg p-4 overflow-auto">
+                          <div
+                            className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none"
+                            dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
+                          />
+                        </div>
+                      ) : (
+                        <textarea
+                          value={editorContent}
+                          onChange={(e) => handleContentChange(e.target.value)}
+                          className="w-full flex-1 text-sm leading-relaxed text-gray-700 font-mono resize-none border-none outline-none"
+                          placeholder="ここにMarkdown形式で内容を入力してください..."
+                          style={{ minHeight: '400px' }}
+                        />
+                      )}
                       <div className="mt-4 pt-4 border-t border-gray-200 text-xs text-center text-gray-500">
                         <p>markdown 編集モード</p>
                       </div>
@@ -744,29 +900,29 @@ const DashboardPage: React.FC = () => {
               {dictionaryItems.map((item) => (
                 <div key={item.id} className="border border-gray-300 rounded-md bg-white">
                   <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                    <h3 className="text-sm font-semibold text-gray-700">辞書</h3>
+                    <h3 className="text-sm font-semibold text-gray-700">{item.term}</h3>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={handleCloseDictionaryManager}
-                        className="text-gray-400 hover:text-gray-600 transition-colors"
-                        aria-label="最小化"
+                        onClick={() => handleEditDictionaryEntry(item)}
+                        className="text-gray-400 hover:text-gray-600 transition-colors text-xs"
+                        aria-label="辞書エントリを編集"
                       >
-                        <Minus className="h-4 w-4" />
+                        編集
                       </button>
                       <button
-                        onClick={() => {
-                          setDictionaryItems(dictionaryItems.filter(d => d.id !== item.id))
-                        }}
+                        onClick={() => handleRemoveDictionaryEntry(item.id)}
                         className="text-gray-400 hover:text-gray-600 transition-colors"
-                        aria-label="閉じる"
+                        aria-label="辞書エントリを削除"
                       >
                         <X className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
                   <div className="px-3 py-2">
-                    <p className="text-sm font-medium text-gray-700 mb-1">{item.name}</p>
-                    <p className="text-sm text-gray-600">{item.description}</p>
+                    <p className="text-sm text-gray-600 whitespace-pre-wrap">{item.description}</p>
+                    <p className="text-[11px] text-gray-400 mt-2">
+                      登録日: {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '-'}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -942,9 +1098,18 @@ const DashboardPage: React.FC = () => {
       {/* Dictionary Input Modal */}
       <DictionaryInputModal
         isOpen={isDictionaryInputOpen}
-        onClose={() => setIsDictionaryInputOpen(false)}
-        onSave={handleSaveDictionaryText}
-        onNext={handleAddDictionaryItem}
+        onClose={() => {
+          setIsDictionaryInputOpen(false)
+          setEditingDictionaryEntry(null)
+        }}
+        onSave={handleDictionaryModalSave}
+        onNext={editingDictionaryEntry ? undefined : handleAddDictionaryItem}
+        mode={editingDictionaryEntry ? 'edit' : 'create'}
+        initialEntry={
+          editingDictionaryEntry
+            ? { term: editingDictionaryEntry.term, description: editingDictionaryEntry.description }
+            : undefined
+        }
       />
     </div>
   )
