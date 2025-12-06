@@ -5,10 +5,12 @@ import { Button } from '@/components/ui/Button'
 import { SettingsModal, SettingsData } from '@/components/SettingsModal'
 import { PromptInputModal } from '@/components/PromptInputModal'
 import { DictionaryInputModal } from '@/components/DictionaryInputModal'
-import { mockDataService, Scenario, DictionaryEntry } from '@/services/mockDataService'
-import { Plus, Settings, LogOut, Search, ChevronRight, ChevronUp, ChevronDown, X, Minus } from 'lucide-react'
-import { renderMarkdownToHtml, MARKDOWN_TEST_SNIPPET, applyDictionaryHighlights } from '@/utils/markdown'
-import { parseOutlineSections, moveSectionInMarkdown } from '@/utils/outline'
+import { mockDataService, Scenario } from '@/services/mockDataService'
+import { Plus, Settings, LogOut, Search, ChevronRight, X, Minus, Download } from 'lucide-react'
+import { renderMarkdownToHtml, MARKDOWN_TEST_SNIPPET, applyDictionaryHighlights, stripMarkdownToPlainText } from '@/utils/markdown'
+import { parseOutlineSections, reorderSectionsInMarkdown } from '@/utils/outline'
+import { ProjectTextRelation, AIPolicy, DictionaryEntry } from '@/types'
+import JSZip from 'jszip'
 
 const VIEW_MODES = ['outline', 'plain', 'preview', 'markdown'] as const
 const PREVIEW_LAYOUTS = ['edit', 'split', 'preview'] as const
@@ -76,6 +78,8 @@ const DashboardPage: React.FC = () => {
     { id: 'memo', title: 'メモ', content: '' }
   ])
   const [expandedChapters, setExpandedChapters] = React.useState<Set<string>>(new Set())
+  const [draggingSectionId, setDraggingSectionId] = React.useState<string | null>(null)
+  const [dragOverSectionId, setDragOverSectionId] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (!user) {
@@ -165,6 +169,142 @@ const DashboardPage: React.FC = () => {
   const handleSaveSettings = (settings: SettingsData) => {
     console.log('Settings saved:', settings)
     // 設定を保存した後の処理（必要に応じて実装）
+  }
+
+  const buildProjectExportJson = async (scenario: Scenario): Promise<{ project: ProjectTextRelation; files: Record<string, string> }> => {
+    // プロジェクト構造を取得
+    const project = mockDataService.getProject(scenario.id)
+    if (!project) {
+      // プロジェクトが存在しない場合は、Scenarioから構築
+      const mainFileName = `${scenario.title || 'project'}.md`
+      const mainFilePath = `texts/${mainFileName}`
+
+      const defaultPolicy: AIPolicy = {
+        read: 'allow',
+        quote: 'internal',
+        write: 'deny',
+        scope: ['local'],
+        until: null
+      }
+
+      const projectData: ProjectTextRelation = {
+        id: `proj-${scenario.id}`,
+        name: scenario.title || '無題プロジェクト',
+        main: mainFileName,
+        ai_policy: defaultPolicy,
+        texts: [
+          {
+            id: 't-main',
+            path: mainFilePath,
+            tags: scenario.tags || []
+          }
+        ],
+        tags: Array.from(new Set(scenario.tags || [])),
+        tag_docs: {},
+        libraly: scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0 ? ['辞書'] : undefined,
+        lib_docs:
+          scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0
+            ? {
+                辞書: { path: 'tags/辞書.md' }
+              }
+            : undefined
+      }
+
+      const files: Record<string, string> = {
+        [mainFilePath]: editorContent
+      }
+
+      if (scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0) {
+        const dictMarkdown = scenario.dictionaryEntries
+          .map((entry) => `### ${entry.term}\n${entry.description}`)
+          .join('\n\n')
+        files['tags/辞書.md'] = dictMarkdown
+      }
+
+      return { project: projectData, files }
+    }
+
+    // プロジェクト構造から直接エクスポート
+    const files: Record<string, string> = {}
+
+    // すべてのテキストファイルを取得
+    for (const text of project.texts) {
+      const content = mockDataService.getProjectTextContent(project.id, text.id)
+      if (content) {
+        files[text.path] = content
+      }
+    }
+
+    // タグドキュメントを取得
+    for (const [tagName, tagDoc] of Object.entries(project.tag_docs || {})) {
+      // タグドキュメントの内容は現時点では空（将来的に実装）
+      if (tagDoc.path && !files[tagDoc.path]) {
+        files[tagDoc.path] = `# ${tagName}\n\nタグ「${tagName}」の説明`
+      }
+    }
+
+    // ライブラリドキュメントを取得
+    if (project.lib_docs) {
+      for (const [libName, libDoc] of Object.entries(project.lib_docs)) {
+        if (libDoc.path && !files[libDoc.path]) {
+          // 辞書の場合
+          if (libName === '辞書') {
+            const dictionary = mockDataService.getProjectDictionary(project.id)
+            if (dictionary.length > 0) {
+              const dictMarkdown = dictionary
+                .map((entry) => `### ${entry.term}\n${entry.description}`)
+                .join('\n\n')
+              files[libDoc.path] = dictMarkdown
+            } else {
+              files[libDoc.path] = `# 辞書\n\nプロジェクト「${project.name}」の辞書`
+            }
+          } else {
+            files[libDoc.path] = `# ${libName}\n\nライブラリ「${libName}」の内容`
+          }
+        }
+      }
+    }
+
+    return { project, files }
+  }
+
+  const handleExportProject = async () => {
+    if (!selectedScenario) {
+      alert('エクスポートするプロジェクトを選択してください。')
+      return
+    }
+
+    try {
+      const { project, files } = await buildProjectExportJson(selectedScenario)
+      
+      // ZIPファイルを作成
+      const zip = new JSZip()
+      
+      // プロジェクトJSONを追加
+      zip.file('project.json', JSON.stringify(project, null, 2))
+      
+      // すべてのテキストファイルを追加
+      for (const [filePath, content] of Object.entries(files)) {
+        zip.file(filePath, content)
+      }
+      
+      // ZIPファイルを生成してダウンロード
+      const zipBlob = await zip.generateAsync({ type: 'blob' })
+      const url = URL.createObjectURL(zipBlob)
+      const link = document.createElement('a')
+      const safeTitle = selectedScenario.title || 'project'
+      link.href = url
+      link.download = `${safeTitle}-export.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      
+      alert('プロジェクトのエクスポートが完了しました。')
+    } catch (error) {
+      console.error('Export error:', error)
+      alert('プロジェクトのエクスポートに失敗しました。')
+    }
   }
 
   const handleContentChange = (newContent: string) => {
@@ -353,25 +493,6 @@ const DashboardPage: React.FC = () => {
     () => applyDictionaryHighlights(renderedMarkdown, dictionaryItems),
     [renderedMarkdown, dictionaryItems]
   )
-  const sectionMovementMap = React.useMemo(() => {
-    const map = new Map<string, { canMoveUp: boolean; canMoveDown: boolean }>()
-    const groups = new Map<number, typeof outlineSections>()
-    outlineSections.forEach((section) => {
-      const existing = groups.get(section.level) ?? []
-      existing.push(section)
-      groups.set(section.level, existing)
-    })
-    groups.forEach((sections) => {
-      sections.forEach((section, index) => {
-        map.set(section.id, {
-          canMoveUp: index > 0,
-          canMoveDown: index < sections.length - 1
-        })
-      })
-    })
-    return map
-  }, [outlineSections])
-
   const toggleChapter = (id: string) => {
     const newExpanded = new Set(expandedChapters)
     if (newExpanded.has(id)) {
@@ -382,8 +503,9 @@ const DashboardPage: React.FC = () => {
     setExpandedChapters(newExpanded)
   }
 
-  const handleMoveSection = (sectionId: string, direction: 'up' | 'down') => {
-    const updated = moveSectionInMarkdown(editorContent, sectionId, direction)
+  const handleReorderSection = (sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return
+    const updated = reorderSectionsInMarkdown(editorContent, sourceId, targetId)
     if (updated !== editorContent) {
       handleContentChange(updated)
     }
@@ -391,8 +513,11 @@ const DashboardPage: React.FC = () => {
 
   if (isLoadingScenarios) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 text-gray-700">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-gray-400" />
+      <div className="h-screen w-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-slate-200 border-t-blue-500" />
+          <p className="text-sm font-semibold text-slate-600">読み込み中...</p>
+        </div>
       </div>
     )
   }
@@ -402,13 +527,13 @@ const DashboardPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 text-gray-900">
-      <div className="w-full max-w-none mx-auto px-4 sm:px-6 lg:px-12 xl:px-16 py-10">
+    <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20">
+      <div className="h-full w-full flex flex-col px-6 py-5">
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-5 flex-shrink-0">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex-1 max-w-md">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5 tracking-wide uppercase">
                 プロジェクトの名前
               </label>
               <input
@@ -416,15 +541,31 @@ const DashboardPage: React.FC = () => {
                 value={projectName}
                 onChange={(e) => handleProjectNameChange(e.target.value)}
                 placeholder="プロジェクト名を入力"
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200"
               />
             </div>
-            <div className="flex items-center space-x-3">
-              <Button variant="outline" className="px-6" onClick={() => setIsSettingsOpen(true)}>
+            <div className="flex items-center space-x-2.5">
+              <Button 
+                variant="outline" 
+                className="px-5 py-2.5 bg-white/80 backdrop-blur-sm border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-white hover:shadow-md hover:border-slate-300 transition-all duration-200" 
+                onClick={() => setIsSettingsOpen(true)}
+              >
                 <Settings className="h-4 w-4 mr-2" />
                 設定
               </Button>
-              <Button variant="outline" className="px-6" onClick={handleSignOut}>
+              <Button 
+                variant="outline" 
+                className="px-5 py-2.5 bg-white/80 backdrop-blur-sm border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-white hover:shadow-md hover:border-slate-300 transition-all duration-200" 
+                onClick={handleExportProject}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                エクスポート
+              </Button>
+              <Button 
+                variant="outline" 
+                className="px-5 py-2.5 bg-white/80 backdrop-blur-sm border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-white hover:shadow-md hover:border-slate-300 transition-all duration-200" 
+                onClick={handleSignOut}
+              >
                 <LogOut className="h-4 w-4 mr-2" />
                 ログアウト
               </Button>
@@ -432,25 +573,25 @@ const DashboardPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[clamp(220px,18vw,280px)_minmax(0,1fr)_clamp(240px,21vw,360px)]">
+        <div className="flex-1 grid grid-cols-1 gap-5 xl:grid-cols-[clamp(240px,18vw,280px)_minmax(0,1fr)_clamp(260px,21vw,380px)] min-h-0">
           {/* Project List */}
-          <aside className="border border-gray-300 bg-white rounded-lg p-4 flex flex-col h-[794px]">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">プロジェクト一覧</h2>
-            <div className="space-y-2 flex-1 overflow-auto pr-1">
+          <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col shadow-lg shadow-slate-200/50 min-h-0">
+            <h2 className="text-xs font-bold text-slate-600 mb-4 tracking-wider uppercase">プロジェクト一覧</h2>
+            <div className="space-y-2 flex-1 overflow-y-auto scrollable pr-1 min-h-0">
               {scenarios.length === 0 ? (
-                <p className="text-sm text-gray-500">まだプロジェクトがありません。</p>
+                <p className="text-sm text-slate-400 italic py-8 text-center">まだプロジェクトがありません</p>
               ) : (
                 scenarios.map((scenario) => (
                   <button
                     key={scenario.id}
                     onClick={() => setSelectedScenarioId(scenario.id)}
-                    className={`w-full text-left px-3 py-2 rounded-md border ${
+                    className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all duration-200 ${
                       selectedScenarioId === scenario.id
-                        ? 'border-gray-900 bg-gray-900 text-white'
-                        : 'border-gray-300 bg-white hover:bg-gray-50'
-                    } transition`}
+                        ? 'border-blue-500 bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg shadow-blue-500/30 scale-[1.02]'
+                        : 'border-slate-200 bg-white/60 hover:bg-white hover:border-slate-300 hover:shadow-md text-slate-700'
+                    }`}
                   >
-                    <p className="text-sm font-medium truncate">{scenario.title}</p>
+                    <p className="text-sm font-semibold truncate">{scenario.title}</p>
                   </button>
                 ))
               )}
@@ -458,7 +599,7 @@ const DashboardPage: React.FC = () => {
             <Button
               variant="outline"
               onClick={handleCreateScenario}
-              className="mt-4 w-full justify-center"
+              className="mt-4 w-full justify-center py-3 bg-gradient-to-r from-blue-500 to-indigo-500 text-white border-0 rounded-xl font-semibold shadow-md shadow-blue-500/30 hover:shadow-lg hover:shadow-blue-500/40 hover:scale-[1.02] transition-all duration-200"
             >
               <Plus className="h-4 w-4 mr-2" />
               新規作成
@@ -466,21 +607,21 @@ const DashboardPage: React.FC = () => {
           </aside>
 
           {/* Main Editor */}
-          <section className="border border-gray-300 bg-white rounded-lg p-6 h-[794px] flex flex-col">
-            <div className="flex items-center flex-wrap gap-3 mb-6">
-              <span className="text-sm font-semibold text-gray-700">ViewMode</span>
+          <section className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col shadow-lg shadow-slate-200/50 min-h-0">
+            <div className="flex items-center flex-wrap gap-3 mb-4 flex-shrink-0">
+              <span className="text-xs font-bold text-slate-600 tracking-wider uppercase">ViewMode</span>
               <div className="flex flex-wrap gap-2">
                 {VIEW_MODES.map((mode) => (
                   <button
                     key={mode}
                     onClick={() => setViewMode(mode)}
-                    className={`px-4 py-1.5 rounded-md border text-sm capitalize ${
+                    className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold capitalize transition-all duration-200 ${
                       viewMode === mode
                         ? (mode === 'plain' || mode === 'outline' || mode === 'preview' || mode === 'markdown')
-                          ? 'border-green-500 bg-green-500 text-white'
-                          : 'border-gray-900 bg-gray-900 text-white'
-                        : 'border-gray-300 bg-white hover:bg-gray-50'
-                    } transition`}
+                          ? 'border-emerald-500 bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/30 scale-105'
+                          : 'border-slate-800 bg-slate-800 text-white shadow-md'
+                        : 'border-slate-200 bg-white/80 text-slate-600 hover:bg-white hover:border-slate-300 hover:shadow-sm'
+                    }`}
                   >
                     {mode}
                   </button>
@@ -488,17 +629,17 @@ const DashboardPage: React.FC = () => {
               </div>
               {(viewMode === 'markdown' || viewMode === 'preview') && (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">表示</span>
-                  <div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">表示</span>
+                  <div className="inline-flex rounded-xl border-2 border-slate-200 overflow-hidden bg-white/80">
                     {PREVIEW_LAYOUTS.map((layout) => (
                       <button
                         key={layout}
                         type="button"
                         onClick={() => handlePreviewLayoutSelect(layout)}
-                        className={`px-3 py-1 text-xs font-medium capitalize ${
+                        className={`px-3 py-1.5 text-xs font-semibold capitalize transition-all duration-200 ${
                           previewLayout === layout
-                            ? 'bg-gray-900 text-white'
-                            : 'bg-white text-gray-600 hover:bg-gray-100'
+                            ? 'bg-gradient-to-r from-slate-700 to-slate-800 text-white shadow-inner'
+                            : 'bg-transparent text-slate-600 hover:bg-slate-50'
                         }`}
                       >
                         {layout === 'edit' ? '編集' : layout === 'split' ? '分割' : 'プレビュー'}
@@ -510,57 +651,74 @@ const DashboardPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleInjectMarkdownSample}
-                className="text-xs font-semibold border border-dashed border-gray-300 rounded-md px-3 py-1 text-gray-600 hover:bg-gray-100 transition"
+                className="text-xs font-semibold border-2 border-dashed border-slate-300 rounded-xl px-3 py-1.5 text-slate-500 hover:bg-slate-50 hover:border-slate-400 transition-all duration-200"
               >
                 Markdownテスト挿入
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-6 flex-1">
+            <div className="grid grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
               {(viewMode === 'outline' || viewMode === 'plain' || viewMode === 'preview' || viewMode === 'markdown' || viewMode === null) && (
-                <div className="border border-gray-200 rounded-md p-4 bg-gray-50 overflow-auto" style={{ maxHeight: 'calc(794px - 120px)' }}>
-                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Outline</h3>
+                <div className="border-2 border-slate-200/60 rounded-xl p-4 bg-gradient-to-br from-slate-50/80 to-blue-50/30 overflow-y-auto scrollable min-h-0">
+                  <h3 className="text-xs font-bold text-slate-600 mb-3 tracking-wider uppercase">Outline</h3>
                   <div className="space-y-1 text-sm text-gray-600">
                     {outlineSections.length > 0 ? (
                       outlineSections.map((item) => {
-                        const movement = sectionMovementMap.get(item.id) ?? { canMoveUp: false, canMoveDown: false }
+                        const isExpanded = expandedChapters.has(item.id)
                         return (
                           <div
                             key={item.id}
-                            className="flex items-center gap-1 group"
+                            className={`flex items-center gap-1 group ${
+                              dragOverSectionId === item.id ? 'bg-blue-50 rounded' : ''
+                            }`}
                           >
-                            <button
-                              type="button"
-                              className={`flex-1 text-left truncate hover:bg-gray-100 px-2 py-1 rounded transition ${
-                                item.level <= 1 ? 'pl-0' : item.level === 2 ? 'pl-4' : 'pl-8'
-                              }`}
-                              onClick={() => toggleChapter(item.id)}
+                            <div
+                              className={`flex-1 flex items-center gap-2 cursor-move hover:bg-white/60 px-3 py-2 rounded-lg transition-all duration-200 ${
+                                item.level <= 1 ? 'pl-0' : item.level === 2 ? 'pl-6' : 'pl-12'
+                              } ${dragOverSectionId === item.id ? 'bg-blue-100/50 border-2 border-blue-300' : ''}`}
+                              draggable
+                              onDragStart={(e) => {
+                                setDraggingSectionId(item.id)
+                                e.dataTransfer.effectAllowed = 'move'
+                              }}
+                              onDragOver={(e) => {
+                                e.preventDefault()
+                                e.dataTransfer.dropEffect = 'move'
+                                if (draggingSectionId && draggingSectionId !== item.id) {
+                                  setDragOverSectionId(item.id)
+                                }
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault()
+                                if (draggingSectionId && draggingSectionId !== item.id) {
+                                  handleReorderSection(draggingSectionId, item.id)
+                                }
+                                setDragOverSectionId(null)
+                                setDraggingSectionId(null)
+                              }}
+                              onDragEnd={() => {
+                                setDragOverSectionId(null)
+                                setDraggingSectionId(null)
+                              }}
+                              onDragLeave={() => {
+                                if (dragOverSectionId === item.id) {
+                                  setDragOverSectionId(null)
+                                }
+                              }}
+                              onClick={() => {
+                                // ドラッグ中でない場合のみトグル
+                                if (!draggingSectionId) {
+                                  toggleChapter(item.id)
+                                }
+                              }}
                             >
-                              {item.text}
-                            </button>
-                            <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                type="button"
-                                onClick={() => handleMoveSection(item.id, 'up')}
-                                disabled={!movement.canMoveUp}
-                                className={`p-1 rounded border text-xs ${
-                                  movement.canMoveUp ? 'hover:bg-gray-100 text-gray-600' : 'text-gray-300 cursor-not-allowed'
-                                }`}
-                                aria-label="セクションを上に移動"
-                              >
-                                <ChevronUp className="h-3 w-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleMoveSection(item.id, 'down')}
-                                disabled={!movement.canMoveDown}
-                                className={`p-1 rounded border text-xs ${
-                                  movement.canMoveDown ? 'hover:bg-gray-100 text-gray-600' : 'text-gray-300 cursor-not-allowed'
-                                }`}
-                                aria-label="セクションを下に移動"
-                              >
-                                <ChevronDown className="h-3 w-3" />
-                              </button>
+                              <span className="text-sm font-medium text-slate-700">{item.text}</span>
+                              {isExpanded && (
+                                <span className="text-xs text-slate-400 ml-1">▼</span>
+                              )}
+                              {!isExpanded && (
+                                <span className="text-xs text-slate-400 ml-1">▶</span>
+                              )}
                             </div>
                           </div>
                         )
@@ -571,7 +729,7 @@ const DashboardPage: React.FC = () => {
                   </div>
                 </div>
               )}
-              <div className={`border border-gray-200 rounded-md p-4 overflow-auto bg-white ${(viewMode === 'outline' || viewMode === 'plain' || viewMode === 'preview' || viewMode === 'markdown' || viewMode === null) ? '' : 'md:col-span-2'}`} style={{ maxHeight: 'calc(794px - 120px)' }}>
+              <div className={`border-2 border-slate-200/60 rounded-xl p-5 overflow-y-auto scrollable bg-white/80 backdrop-blur-sm min-h-0 ${(viewMode === 'outline' || viewMode === 'plain' || viewMode === 'preview' || viewMode === 'markdown' || viewMode === null) ? '' : 'md:col-span-2'}`}>
                 {selectedScenario ? (
                   viewMode === null ? (
                     <div className="relative h-full min-h-[400px] flex items-center justify-center bg-white">
@@ -585,49 +743,47 @@ const DashboardPage: React.FC = () => {
                       {outlineSections.length > 0 ? (
                         <div className="flex-1 space-y-3">
                           {outlineSections.map((item, index) => {
-                            const movement = sectionMovementMap.get(item.id) ?? { canMoveUp: false, canMoveDown: false }
                             return (
                               <div
                                 key={`outline-main-${item.id}-${index}`}
-                                className="flex flex-col border border-gray-100 rounded-lg p-3 hover:border-gray-300 transition-colors"
+                                className={`flex flex-col border-2 rounded-xl p-4 hover:border-slate-300 hover:shadow-md transition-all duration-200 cursor-move bg-white/80 backdrop-blur-sm ${
+                                  dragOverSectionId === item.id ? 'border-blue-400 bg-blue-50/80 shadow-lg shadow-blue-400/20 scale-[1.02]' : 'border-slate-200'
+                                }`}
+                                draggable
+                                onDragStart={() => setDraggingSectionId(item.id)}
+                                onDragOver={(e) => {
+                                  e.preventDefault()
+                                  if (draggingSectionId && draggingSectionId !== item.id) {
+                                    setDragOverSectionId(item.id)
+                                  }
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault()
+                                  if (draggingSectionId && draggingSectionId !== item.id) {
+                                    handleReorderSection(draggingSectionId, item.id)
+                                  }
+                                  setDragOverSectionId(null)
+                                  setDraggingSectionId(null)
+                                }}
+                                onDragEnd={() => {
+                                  setDragOverSectionId(null)
+                                  setDraggingSectionId(null)
+                                }}
+                                onDragLeave={() => {
+                                  if (dragOverSectionId === item.id) {
+                                    setDragOverSectionId(null)
+                                  }
+                                }}
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="flex items-center gap-3">
-                                    <span className="text-sm font-semibold text-gray-500">
+                                    <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
                                       {index + 1}章
                                     </span>
-                                    <span className="font-medium text-gray-800">{item.text}</span>
-                                  </div>
-                                  <div className="flex gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleMoveSection(item.id, 'up')}
-                                      disabled={!movement.canMoveUp}
-                                      className={`p-1 rounded border ${
-                                        movement.canMoveUp
-                                          ? 'hover:bg-gray-100 text-gray-600'
-                                          : 'text-gray-300 cursor-not-allowed opacity-60'
-                                      }`}
-                                      aria-label="上に移動"
-                                    >
-                                      <ChevronUp className="h-4 w-4" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleMoveSection(item.id, 'down')}
-                                      disabled={!movement.canMoveDown}
-                                      className={`p-1 rounded border ${
-                                        movement.canMoveDown
-                                          ? 'hover:bg-gray-100 text-gray-600'
-                                          : 'text-gray-300 cursor-not-allowed opacity-60'
-                                      }`}
-                                      aria-label="下に移動"
-                                    >
-                                      <ChevronDown className="h-4 w-4" />
-                                    </button>
+                                    <span className="font-semibold text-slate-800">{item.text}</span>
                                   </div>
                                 </div>
-                                <p className="text-xs text-gray-500 mt-1">
+                                <p className="text-xs text-slate-400 mt-2 font-medium">
                                   レベル: {item.level} / 開始行 {item.startLine + 1}
                                 </p>
                               </div>
@@ -635,64 +791,63 @@ const DashboardPage: React.FC = () => {
                           })}
                         </div>
                       ) : (
-                        <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
-                          アウトラインはまだありません。
+                        <div className="flex-1 flex items-center justify-center text-sm text-slate-400 italic">
+                          アウトラインはまだありません
                         </div>
                       )}
-                      <div className="mt-6 pt-4 border-t border-gray-200 text-xs text-gray-500 space-y-1">
-                        <p>いわゆるアウトラインエディタモード</p>
+                      <div className="mt-6 pt-4 border-t-2 border-slate-200/60 text-xs text-slate-500 space-y-1 bg-slate-50/50 rounded-lg p-3">
+                        <p className="font-semibold">いわゆるアウトラインエディタモード</p>
                         <p>本文は折りたたまれている</p>
                         <p>header要素をドラッグ・アンド・ドロップできる</p>
                       </div>
                     </div>
                   ) : viewMode === 'plain' ? (
-                    <div className="h-full flex flex-col min-h-[400px]">
-                      <textarea
-                        value={editorContent}
-                        onChange={(e) => handleContentChange(e.target.value)}
-                        className="w-full flex-1 text-sm leading-relaxed text-gray-700 resize-none border-none outline-none font-sans"
-                        placeholder="ここにプレーンテキストで内容を入力してください..."
-                        style={{ fontFamily: 'inherit', minHeight: '320px' }}
-                      />
-                      <div className="mt-4 pt-4 border-t border-gray-200 text-xs text-gray-500 space-y-1">
-                        <p>プレーンテキストモード</p>
+                    <div className="h-full flex flex-col min-h-0">
+                      <div className="w-full flex-1 text-sm leading-relaxed text-slate-700 font-sans whitespace-pre-wrap overflow-y-auto scrollable border-none outline-none">
+                        {stripMarkdownToPlainText(editorContent) || (
+                          <span className="text-slate-400 italic">ここにプレーンテキストで内容が表示されます...</span>
+                        )}
+                      </div>
+                      <div className="mt-4 pt-4 border-t-2 border-slate-200 text-xs text-slate-500 space-y-1 bg-slate-50/50 rounded-lg p-3">
+                        <p className="font-semibold">プレーンテキストモード</p>
                         <p>markdownのレンダリングが使用されない</p>
                         <p>読み・書き下ろしのためのモード</p>
+                        <p className="text-slate-400 mt-2">※ 編集はMarkdownモードで行ってください</p>
                       </div>
                     </div>
                   ) : viewMode === 'preview' ? (
-                    <div className="h-full min-h-[400px]">
+                  <div className="h-full min-h-0 overflow-y-auto scrollable">
                       <div
-                        className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none"
+                        className="markdown-preview"
                         dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
                       />
-                      <div className="mt-6 pt-4 border-t border-gray-200 text-xs text-gray-500 space-y-1">
+                      <div className="mt-6 pt-4 border-t-2 border-slate-200 text-xs text-slate-500 space-y-1 bg-slate-50/50 rounded-lg p-3">
                         <p>このツールでは表現できないが、強調表示やリストなど</p>
                         <p>markdownのレンダリング表示モード</p>
                         <p>リンクや辞書などをハイライト表示</p>
                       </div>
                     </div>
                   ) : viewMode === 'markdown' ? (
-                    <div className="h-full flex flex-col min-h-[400px]">
+                    <div className="h-full flex flex-col min-h-0">
                       {previewLayout === 'split' ? (
-                        <div className="grid md:grid-cols-2 gap-4 flex-1">
+                        <div className="grid md:grid-cols-2 gap-4 flex-1 min-h-0">
                           <textarea
                             value={editorContent}
                             onChange={(e) => handleContentChange(e.target.value)}
-                            className="w-full h-full text-sm leading-relaxed text-gray-700 font-mono resize-none border border-gray-200 rounded-lg p-3"
+                            className="w-full h-full text-sm leading-relaxed text-slate-700 font-mono resize-none border-2 border-slate-200 rounded-xl p-4 bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 scrollable"
                             placeholder="ここにMarkdown形式で内容を入力してください..."
                           />
-                          <div className="border border-gray-200 rounded-lg p-3 overflow-auto">
+                          <div className="border-2 border-slate-200 rounded-xl p-4 overflow-y-auto scrollable bg-white/90">
                             <div
-                              className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none"
+                              className="markdown-preview"
                               dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
                             />
                           </div>
                         </div>
                       ) : previewLayout === 'preview' ? (
-                        <div className="flex-1 border border-gray-200 rounded-lg p-4 overflow-auto">
+                        <div className="flex-1 border-2 border-slate-200 rounded-xl p-4 overflow-y-auto scrollable bg-white/90 min-h-0">
                           <div
-                            className="text-sm leading-relaxed text-gray-700 prose prose-sm max-w-none"
+                            className="markdown-preview"
                             dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
                           />
                         </div>
@@ -700,13 +855,12 @@ const DashboardPage: React.FC = () => {
                         <textarea
                           value={editorContent}
                           onChange={(e) => handleContentChange(e.target.value)}
-                          className="w-full flex-1 text-sm leading-relaxed text-gray-700 font-mono resize-none border-none outline-none"
+                          className="w-full flex-1 text-sm leading-relaxed text-slate-700 font-mono resize-none border-none outline-none bg-transparent scrollable"
                           placeholder="ここにMarkdown形式で内容を入力してください..."
-                          style={{ minHeight: '400px' }}
                         />
                       )}
-                      <div className="mt-4 pt-4 border-t border-gray-200 text-xs text-center text-gray-500">
-                        <p>markdown 編集モード</p>
+                      <div className="mt-4 pt-4 border-t-2 border-slate-200 text-xs text-center text-slate-500 bg-slate-50/50 rounded-lg p-3">
+                        <p className="font-semibold">markdown 編集モード</p>
                       </div>
                     </div>
                   ) : (
@@ -715,7 +869,9 @@ const DashboardPage: React.FC = () => {
                     </div>
                   )
                 ) : (
-                  <p className="text-sm text-gray-500">プロジェクトを選択すると内容が表示されます。</p>
+                  <div className="h-full flex items-center justify-center">
+                    <p className="text-sm text-slate-400 italic">プロジェクトを選択すると内容が表示されます</p>
+                  </div>
                 )}
               </div>
             </div>
@@ -723,79 +879,81 @@ const DashboardPage: React.FC = () => {
 
           {/* Action Panel / Tag Manager / Dictionary Manager / Proofread Mode */}
           {showProofreadMode ? (
-            <aside className="border border-gray-300 bg-white rounded-lg p-4 flex flex-col h-[794px] space-y-3">
-              <div className="flex items-center justify-between border-b border-gray-200 pb-2">
-                <h3 className="text-sm font-semibold text-gray-700">校正モード</h3>
+            <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col space-y-3 shadow-lg shadow-slate-200/50 min-h-0">
+              <div className="flex items-center justify-between border-b-2 border-slate-200/60 pb-3 mb-3">
+                <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">校正モード</h3>
                 <button
                   onClick={() => setShowProofreadMode(false)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                   aria-label="校正モードを閉じる"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
               {/* Custom Panels */}
-              {customPanels.map((panel) => (
-                <div key={panel.id} className="border border-gray-300 rounded-md bg-white">
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                    <input
-                      type="text"
-                      value={panel.title}
-                      onChange={(e) => handleUpdatePanelTitle(panel.id, e.target.value)}
-                      className="text-sm font-semibold text-gray-700 bg-transparent border-none outline-none focus:bg-gray-50 px-1 rounded"
-                      onBlur={(e) => {
-                        if (!e.target.value.trim()) {
-                          handleUpdatePanelTitle(panel.id, '新しいパネル')
-                        }
-                      }}
-                    />
-                    <button
-                      onClick={() => handleRemovePanel(panel.id)}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
-                      aria-label="閉じる"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
+              <div className="flex-1 overflow-y-auto scrollable space-y-3 min-h-0">
+                {customPanels.map((panel) => (
+                  <div key={panel.id} className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md">
+                    <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
+                      <input
+                        type="text"
+                        value={panel.title}
+                        onChange={(e) => handleUpdatePanelTitle(panel.id, e.target.value)}
+                        className="text-xs font-bold text-slate-700 bg-transparent border-none outline-none focus:bg-white px-2 py-1 rounded-lg tracking-wider uppercase"
+                        onBlur={(e) => {
+                          if (!e.target.value.trim()) {
+                            handleUpdatePanelTitle(panel.id, '新しいパネル')
+                          }
+                        }}
+                      />
+                      <button
+                        onClick={() => handleRemovePanel(panel.id)}
+                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg p-1 transition-all duration-200"
+                        aria-label="閉じる"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="px-4 py-3 min-h-[80px]">
+                      <textarea
+                        value={panel.content}
+                        onChange={(e) => {
+                          setCustomPanels(customPanels.map(p => 
+                            p.id === panel.id ? { ...p, content: e.target.value } : p
+                          ))
+                        }}
+                        className="w-full text-sm text-slate-700 border-none outline-none resize-none bg-transparent placeholder-slate-400"
+                        placeholder="内容を入力..."
+                        rows={3}
+                      />
+                    </div>
                   </div>
-                  <div className="px-3 py-2 min-h-[80px]">
-                    <textarea
-                      value={panel.content}
-                      onChange={(e) => {
-                        setCustomPanels(customPanels.map(p => 
-                          p.id === panel.id ? { ...p, content: e.target.value } : p
-                        ))
-                      }}
-                      className="w-full text-sm text-gray-700 border-none outline-none resize-none"
-                      placeholder="内容を入力..."
-                      rows={3}
-                    />
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
 
               {/* Action Buttons Grid */}
-              <div className="grid grid-cols-2 gap-2 mt-auto">
+              <div className="grid grid-cols-2 gap-2.5 mt-auto pt-4 border-t-2 border-slate-200/60">
                 <button 
                   onClick={handleAddArticle}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ 文章の追加
                 </button>
                 <button 
                   onClick={handleAddDictionary}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ 辞書の追加
                 </button>
                 <button 
                   onClick={handleAddTag}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ タグの追加
                 </button>
                 <button 
                   onClick={handleProofreadRange}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition flex items-center justify-between"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center justify-between"
                 >
                   <span>範囲を校正</span>
                   <ChevronRight className="h-4 w-4" />
@@ -803,31 +961,31 @@ const DashboardPage: React.FC = () => {
               </div>
             </aside>
           ) : showDictionaryManager ? (
-            <aside className="border border-gray-300 bg-white rounded-lg p-4 flex flex-col h-[794px] space-y-3">
+            <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col space-y-3 shadow-lg shadow-slate-200/50 min-h-0 overflow-y-auto scrollable">
               {/* あらすじ Window */}
-              <div className="border border-gray-300 rounded-md bg-white">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                  <h3 className="text-sm font-semibold text-gray-700">あらすじ</h3>
+              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md">
+                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
+                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">あらすじ</h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseDictionaryManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="最小化"
                     >
                       <Minus className="h-4 w-4" />
                     </button>
                     <button
                       onClick={handleCloseDictionaryManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="閉じる"
                     >
                       <X className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
-                <div className="px-3 py-2 min-h-[80px]">
+                <div className="px-4 py-3 min-h-[80px]">
                   <textarea
-                    className="w-full text-sm text-gray-700 border-none outline-none resize-none"
+                    className="w-full text-sm text-slate-700 border-none outline-none resize-none bg-transparent placeholder-slate-400"
                     placeholder="あらすじを入力..."
                     rows={3}
                   />
@@ -835,29 +993,29 @@ const DashboardPage: React.FC = () => {
               </div>
 
               {/* Note Window */}
-              <div className="border border-gray-300 rounded-md bg-white">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                  <h3 className="text-sm font-semibold text-gray-700">Note</h3>
+              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md">
+                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
+                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">Note</h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseDictionaryManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="最小化"
                     >
                       <Minus className="h-4 w-4" />
                     </button>
                     <button
                       onClick={handleCloseDictionaryManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="閉じる"
                     >
                       <X className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
-                <div className="px-3 py-2 min-h-[80px]">
+                <div className="px-4 py-3 min-h-[80px]">
                   <textarea
-                    className="w-full text-sm text-gray-700 border-none outline-none resize-none"
+                    className="w-full text-sm text-slate-700 border-none outline-none resize-none bg-transparent placeholder-slate-400"
                     placeholder="ノートを入力..."
                     rows={3}
                   />
@@ -865,32 +1023,32 @@ const DashboardPage: React.FC = () => {
               </div>
 
               {/* タグ Window */}
-              <div className="border border-gray-300 rounded-md bg-white">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                  <h3 className="text-sm font-semibold text-gray-700">タグ</h3>
+              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md">
+                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
+                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">タグ</h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseDictionaryManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="最小化"
                     >
                       <Minus className="h-4 w-4" />
                     </button>
                     <button
                       onClick={handleCloseDictionaryManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="閉じる"
                     >
                       <X className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
-                <div className="px-3 py-2 flex items-center gap-2">
-                  <span className="text-sm text-gray-700">タグ</span>
-                  <button className="px-3 py-1 bg-yellow-200 hover:bg-yellow-300 rounded-md text-sm text-gray-700 transition-colors">
+                <div className="px-4 py-3 flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-slate-600">タグ</span>
+                  <button className="px-3 py-1.5 bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 rounded-lg text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all duration-200">
                     Main
                   </button>
-                  <button className="px-3 py-1 border border-gray-300 hover:bg-gray-50 rounded-md text-sm text-gray-700 transition-colors">
+                  <button className="px-3 py-1.5 border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-lg text-sm font-semibold text-slate-600 transition-all duration-200">
                     +説明を追加
                   </button>
                 </div>
@@ -898,29 +1056,29 @@ const DashboardPage: React.FC = () => {
 
               {/* 辞書 Windows */}
               {dictionaryItems.map((item) => (
-                <div key={item.id} className="border border-gray-300 rounded-md bg-white">
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                    <h3 className="text-sm font-semibold text-gray-700">{item.term}</h3>
+                <div key={item.id} className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-blue-50/30 shadow-md">
+                  <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-gradient-to-r from-blue-50/50 to-indigo-50/30 rounded-t-xl">
+                    <h3 className="text-sm font-bold text-slate-800">{item.term}</h3>
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleEditDictionaryEntry(item)}
-                        className="text-gray-400 hover:text-gray-600 transition-colors text-xs"
+                        className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition-all duration-200"
                         aria-label="辞書エントリを編集"
                       >
                         編集
                       </button>
                       <button
                         onClick={() => handleRemoveDictionaryEntry(item.id)}
-                        className="text-gray-400 hover:text-gray-600 transition-colors"
+                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg p-1 transition-all duration-200"
                         aria-label="辞書エントリを削除"
                       >
                         <X className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
-                  <div className="px-3 py-2">
-                    <p className="text-sm text-gray-600 whitespace-pre-wrap">{item.description}</p>
-                    <p className="text-[11px] text-gray-400 mt-2">
+                  <div className="px-4 py-3">
+                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{item.description}</p>
+                    <p className="text-xs text-slate-400 mt-3 font-medium">
                       登録日: {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '-'}
                     </p>
                   </div>
@@ -928,28 +1086,28 @@ const DashboardPage: React.FC = () => {
               ))}
 
               {/* Action Buttons Grid */}
-              <div className="grid grid-cols-2 gap-2 mt-auto">
+              <div className="grid grid-cols-2 gap-2.5 mt-auto pt-4 border-t-2 border-slate-200/60">
                 <button 
                   onClick={handleAddArticle}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ 文章の追加
                 </button>
                 <button 
                   onClick={handleAddDictionary}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ 辞書の追加
                 </button>
                 <button 
                   onClick={handleAddTag}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ タグの追加
                 </button>
                 <button 
                   onClick={handleProofreadRange}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition flex items-center justify-between"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center justify-between"
                 >
                   <span>範囲を校正</span>
                   <ChevronRight className="h-4 w-4" />
@@ -957,68 +1115,68 @@ const DashboardPage: React.FC = () => {
               </div>
             </aside>
           ) : showTagManager ? (
-            <aside className="border border-gray-300 bg-white rounded-lg p-4 flex flex-col min-h-[794px]">
+            <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col space-y-3 shadow-lg shadow-slate-200/50 min-h-0 overflow-y-auto scrollable">
               {/* Tag Window */}
-              <div className="border border-gray-300 rounded-md bg-white mb-4">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200">
-                  <h3 className="text-sm font-semibold text-gray-700">タグ</h3>
+              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md mb-4">
+                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
+                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">タグ</h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseTagManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="最小化"
                     >
                       <Minus className="h-4 w-4" />
                     </button>
                     <button
                       onClick={handleCloseTagManager}
-                      className="text-gray-400 hover:text-gray-600 transition-colors"
+                      className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg p-1 transition-all duration-200"
                       aria-label="閉じる"
                     >
                       <X className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
-                <div className="px-3 py-2">
-                  <p className="text-sm text-gray-700">main</p>
+                <div className="px-4 py-3">
+                  <p className="text-sm font-semibold text-slate-700">main</p>
                 </div>
               </div>
 
               {/* Preview Area */}
-              <div className="flex-1 border border-gray-200 rounded-md bg-white p-4 mb-4 overflow-auto">
-                <p className="text-xs text-gray-500 mb-2">追加されたファイルのプレビューが出る</p>
+              <div className="flex-1 border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 p-4 mb-4 overflow-y-auto scrollable shadow-md min-h-0">
+                <p className="text-xs text-slate-500 mb-3 font-semibold">追加されたファイルのプレビューが出る</p>
                 <div className="min-h-[200px]">
                   {tagPreview ? (
-                    <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono">{tagPreview}</pre>
+                    <pre className="text-sm text-slate-700 whitespace-pre-wrap font-mono bg-slate-50/50 p-3 rounded-lg">{tagPreview}</pre>
                   ) : (
-                    <p className="text-sm text-gray-400">プレビューがここに表示されます</p>
+                    <p className="text-sm text-slate-400 italic">プレビューがここに表示されます</p>
                   )}
                 </div>
               </div>
 
               {/* Action Buttons Grid */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2.5 pt-4 border-t-2 border-slate-200/60">
                 <button 
                   onClick={handleAddArticle}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ 文章の追加
                 </button>
                 <button 
                   onClick={handleAddDictionary}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ 辞書の追加
                 </button>
                 <button 
                   onClick={handleAddNewTag}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
                 >
                   ＋ タグの追加
                 </button>
                 <button 
                   onClick={handleProofreadRange}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm text-left hover:bg-gray-50 transition flex items-center justify-between"
+                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center justify-between"
                 >
                   <span>範囲を校正</span>
                   <ChevronRight className="h-4 w-4" />
@@ -1026,51 +1184,51 @@ const DashboardPage: React.FC = () => {
               </div>
             </aside>
           ) : (
-          <aside className="border border-gray-300 bg-white rounded-lg p-4 flex flex-col space-y-3 h-[794px]">
+          <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col space-y-3 shadow-lg shadow-slate-200/50 min-h-0">
               {/* Generated Text Box */}
-              <div className="border border-gray-300 rounded-md p-4 bg-white mb-4">
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">生成テキスト</h3>
-                <div className="min-h-[120px] max-h-[200px] overflow-auto">
+              <div className="border-2 border-slate-200/60 rounded-xl p-4 bg-gradient-to-br from-slate-50/80 to-blue-50/30 mb-2 shadow-sm">
+                <h3 className="text-xs font-bold text-slate-600 mb-2 tracking-wider uppercase">生成テキスト</h3>
+                <div className="min-h-[120px] max-h-[200px] overflow-y-auto scrollable">
                   {isGenerating ? (
                     <div className="flex items-center justify-center h-full">
-                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-400"></div>
-                      <span className="ml-2 text-sm text-gray-500">生成中...</span>
+                      <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-300 border-t-blue-500"></div>
+                      <span className="ml-2 text-sm text-slate-500 font-medium">生成中...</span>
                     </div>
                   ) : generatedText ? (
-                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{generatedText}</p>
+                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{generatedText}</p>
                   ) : (
-                    <p className="text-sm text-gray-400">生成されたテキストがここに表示されることになります</p>
+                    <p className="text-sm text-slate-400 italic">生成されたテキストがここに表示されることになります</p>
                   )}
                 </div>
               </div>
 
             <button 
               onClick={handleAddArticle}
-              className="w-full border border-gray-300 rounded-md px-4 py-3 text-sm text-left hover:bg-gray-50 transition"
+              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
             >
               ＋ 文章の追加
             </button>
             <button 
               onClick={handleAddTag}
-              className="w-full border border-gray-300 rounded-md px-4 py-3 text-sm text-left hover:bg-gray-50 transition"
+              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
             >
               ＋ タグの追加
             </button>
             <button 
               onClick={handleAddDictionary}
-              className="w-full border border-gray-300 rounded-md px-4 py-3 text-sm text-left hover:bg-gray-50 transition"
+              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
             >
               ＋ 辞書の追加
             </button>
             <button 
               onClick={handleSearchMaterials}
-              className="w-full border border-gray-300 rounded-md px-4 py-3 text-sm text-left hover:bg-gray-50 transition flex items-center"
+              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center"
             >
               <Search className="h-4 w-4 mr-2" /> 資料の検索
             </button>
             <button 
               onClick={handleProofreadRange}
-                className="w-full border border-gray-300 rounded-md px-4 py-3 text-sm text-left hover:bg-gray-50 transition flex items-center justify-between"
+                className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center justify-between"
             >
               <span>範囲を校正</span>
               <ChevronRight className="h-4 w-4" />

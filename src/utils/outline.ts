@@ -52,7 +52,7 @@ export const moveSectionInMarkdown = (
 ): string => {
   const lines = markdown.split('\n')
   const sections = parseOutlineSections(markdown)
-  const currentIndex = sections.findIndex(section => section.id === sectionId)
+  const currentIndex = sections.findIndex((section) => section.id === sectionId)
 
   if (currentIndex === -1) return markdown
 
@@ -87,6 +87,43 @@ export const moveSectionInMarkdown = (
     const adjustedIndex = target.endLine - blockLength
     lines.splice(adjustedIndex, 0, ...block)
   }
+
+  return lines.join('\n')
+}
+
+/**
+ * アウトラインビューでのドラッグ＆ドロップ用に、
+ * セクションブロックを任意のターゲットセクションの直前に移動させる。
+ */
+export const reorderSectionsInMarkdown = (
+  markdown: string,
+  sourceSectionId: string,
+  targetSectionId: string
+): string => {
+  if (sourceSectionId === targetSectionId) return markdown
+
+  const lines = markdown.split('\n')
+  const sections = parseOutlineSections(markdown)
+
+  const sourceIndex = sections.findIndex((section) => section.id === sourceSectionId)
+  const targetIndex = sections.findIndex((section) => section.id === targetSectionId)
+
+  if (sourceIndex === -1 || targetIndex === -1) return markdown
+
+  const source = sections[sourceIndex]
+  const target = sections[targetIndex]
+
+  const blockLength = source.endLine - source.startLine
+  const block = lines.slice(source.startLine, source.endLine)
+
+  // まずソースブロックを削除
+  lines.splice(source.startLine, blockLength)
+
+  // 挿入インデックスを計算（ターゲットの直前に移動）
+  const insertIndex =
+    sourceIndex < targetIndex ? Math.max(0, target.startLine - blockLength) : target.startLine
+
+  lines.splice(insertIndex, 0, ...block)
 
   return lines.join('\n')
 }

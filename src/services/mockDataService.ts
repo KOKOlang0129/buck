@@ -1,10 +1,9 @@
-export interface DictionaryEntry {
-  id: string
-  term: string
-  description: string
-  createdAt: Date
-}
+import { ProjectTextRelation, DictionaryEntry } from '@/types'
 
+/**
+ * 後方互換性のためのScenario型（既存UIとの互換性を保つため）
+ * 内部的にはProjectTextRelationに変換される
+ */
 export interface Scenario {
   id: string
   title: string
@@ -40,133 +39,302 @@ export const mockAISuggestions = [
   "時間が止まったような静寂が訪れた。"
 ]
 
-// Mock scenarios data
-const mockScenarios: Scenario[] = [
+// プロジェクトのテキストコンテンツを保存するマップ
+const projectTextContents: Map<string, Map<string, string>> = new Map()
+
+// Mock projects data (ProjectTextRelationベース)
+const mockProjects: ProjectTextRelation[] = [
   {
-    id: '1',
-    title: '冒険の始まり',
-    content: `主人公のアレックスは小さな村で平凡な生活を送っていた。毎日同じような日々が続き、何か変化を求めていた。
+    id: 'proj-001',
+    name: '冒険の始まり',
+    main: '冒険の始まり.md',
+    ai_policy: {
+      read: 'allow',
+      quote: 'internal',
+      write: 'deny',
+      scope: ['local'],
+      until: null
+    },
+    texts: [
+      {
+        id: 't-main',
+        path: 'texts/冒険の始まり.md',
+        tags: ['overview']
+      }
+    ],
+    tags: ['冒険', 'ファンタジー', '魔法'],
+    tag_docs: {},
+    libraly: ['辞書'],
+    lib_docs: {
+      '辞書': { path: 'tags/辞書.md' }
+    }
+  },
+  {
+    id: 'proj-002',
+    name: '謎の遺跡',
+    main: '謎の遺跡.md',
+    ai_policy: {
+      read: 'allow',
+      quote: 'internal',
+      write: 'deny',
+      scope: ['local'],
+      until: null
+    },
+    texts: [
+      {
+        id: 't-main',
+        path: 'texts/謎の遺跡.md',
+        tags: ['mystery']
+      }
+    ],
+    tags: ['ミステリー', '古代', '考古学'],
+    tag_docs: {},
+    libraly: ['辞書'],
+    lib_docs: {
+      '辞書': { path: 'tags/辞書.md' }
+    }
+  },
+  {
+    id: 'proj-003',
+    name: '宇宙の旅人',
+    main: '宇宙の旅人.md',
+    ai_policy: {
+      read: 'allow',
+      quote: 'internal',
+      write: 'deny',
+      scope: ['local'],
+      until: null
+    },
+    texts: [
+      {
+        id: 't-main',
+        path: 'texts/宇宙の旅人.md',
+        tags: ['sf']
+      }
+    ],
+    tags: ['SF', '宇宙', '冒険'],
+    tag_docs: {},
+    libraly: ['辞書'],
+    lib_docs: {
+      '辞書': { path: 'tags/辞書.md' }
+    }
+  }
+]
+
+// 初期テキストコンテンツを設定
+projectTextContents.set('proj-001', new Map([
+  ['t-main', `主人公のアレックスは小さな村で平凡な生活を送っていた。毎日同じような日々が続き、何か変化を求めていた。
 
 ある朝、村の外れで不思議な光を発する石を発見した。その石に触れた瞬間、世界が一変した。
 
 「これは...魔法の石？」アレックスは呟いた。
 
-その時、石から声が聞こえてきた。「選ばれし者よ、君の冒険が今始まる...」`,
-    createdAt: new Date('2024-01-15'),
-    updatedAt: new Date('2024-01-20'),
-    tags: ['冒険', 'ファンタジー', '魔法'],
-    isPublic: true,
-    authorId: 'mock-user-id',
-    dictionaryEntries: []
-  },
-  {
-    id: '2',
-    title: '謎の遺跡',
-    content: `考古学者のサラは古代の遺跡で不思議な発見をした。壁に刻まれた文字は、これまで見たことのない言語だった。
+その時、石から声が聞こえてきた。「選ばれし者よ、君の冒険が今始まる...」`]
+]))
+
+projectTextContents.set('proj-002', new Map([
+  ['t-main', `考古学者のサラは古代の遺跡で不思議な発見をした。壁に刻まれた文字は、これまで見たことのない言語だった。
 
 「この文字...古代エジプトとも、マヤ文明とも違う」サラは顕微鏡で文字を詳しく調べた。
 
 突然、遺跡の奥から光が差し込んだ。それは自然光ではない。人工的な光だった。
 
-「誰かいるのか？」サラは懐中電灯を手に取り、光の方向へ歩き始めた。`,
-    createdAt: new Date('2024-01-10'),
-    updatedAt: new Date('2024-01-18'),
-    tags: ['ミステリー', '古代', '考古学'],
-    isPublic: false,
-    authorId: 'mock-user-id',
-    dictionaryEntries: []
-  },
-  {
-    id: '3',
-    title: '宇宙の旅人',
-    content: `宇宙船パイオニア号は未知の惑星に向かっていた。船長のケンは地球を離れてから3年が経過していた。
+「誰かいるのか？」サラは懐中電灯を手に取り、光の方向へ歩き始めた。`]
+]))
+
+projectTextContents.set('proj-003', new Map([
+  ['t-main', `宇宙船パイオニア号は未知の惑星に向かっていた。船長のケンは地球を離れてから3年が経過していた。
 
 「地球からの最後の通信から6ヶ月が経った」ケンは航海日誌に記録した。
 
 その時、船の警報システムが作動した。「未知の物体が接近中」という警告音が響いた。
 
-ケンはスクリーンを見つめた。そこには、これまで見たことのない巨大な宇宙船が映し出されていた。`,
-    createdAt: new Date('2024-01-05'),
-    updatedAt: new Date('2024-01-12'),
-    tags: ['SF', '宇宙', '冒険'],
-    isPublic: true,
-    authorId: 'mock-user-id',
-    dictionaryEntries: []
-  }
-]
+ケンはスクリーンを見つめた。そこには、これまで見たことのない巨大な宇宙船が映し出されていた。`]
+]))
+
+// 後方互換性のためのScenario型データ（既存UIとの互換性を保つため）
+// const mockScenarios: Scenario[] = [] // 未使用のためコメントアウト
 
 class MockDataService {
-  private scenarios: Scenario[] = [...mockScenarios]
+  private projects: ProjectTextRelation[] = [...mockProjects]
+  private projectTextContents: Map<string, Map<string, string>> = new Map(projectTextContents)
+  private projectDictionaries: Map<string, DictionaryEntry[]> = new Map()
+  private scenarios: Scenario[] = []
 
-  // Get all scenarios for a user
+  // ProjectTextRelationをScenarioに変換（後方互換性のため）
+  private projectToScenario(project: ProjectTextRelation, authorId: string): Scenario {
+    const mainTextId = project.texts[0]?.id || 't-main'
+    const mainText = this.getProjectTextContent(project.id, mainTextId) || ''
+    const dictionary = this.getProjectDictionary(project.id)
+    
+    return {
+      id: project.id,
+      title: project.name,
+      content: mainText,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      tags: project.tags || [],
+      isPublic: true,
+      authorId,
+      dictionaryEntries: dictionary
+    }
+  }
+
+  // プロジェクトのテキストコンテンツを取得
+  getProjectTextContent(projectId: string, textId: string): string | null {
+    const contents = this.projectTextContents.get(projectId)
+    return contents?.get(textId) || null
+  }
+
+  // プロジェクトのテキストコンテンツを設定
+  setProjectTextContent(projectId: string, textId: string, content: string): void {
+    if (!this.projectTextContents.has(projectId)) {
+      this.projectTextContents.set(projectId, new Map())
+    }
+    this.projectTextContents.get(projectId)!.set(textId, content)
+  }
+
+  // プロジェクトを取得
+  getProject(id: string): ProjectTextRelation | null {
+    return this.projects.find(p => p.id === id) || null
+  }
+
+  // ユーザーのプロジェクト一覧を取得
+  getUserProjects(_userId: string): ProjectTextRelation[] {
+    // 現時点では全プロジェクトを返す（将来的にuserIdでフィルタリング）
+    return this.projects
+  }
+
+  // Get all scenarios for a user (後方互換性のため)
   getUserScenarios(userId: string): Scenario[] {
-    return this.scenarios.filter(s => s.authorId === userId)
+    const userProjects = this.getUserProjects(userId)
+    return userProjects.map(p => this.projectToScenario(p, userId))
   }
 
-  // Get a specific scenario
+  // Get a specific scenario (後方互換性のため)
   getScenario(id: string): Scenario | null {
-    return this.scenarios.find(s => s.id === id) || null
+    const project = this.getProject(id)
+    if (!project) return null
+    return this.projectToScenario(project, 'mock-user-id')
   }
 
-  // Create a new scenario
+  // Create a new project (後方互換性のためcreateScenarioとしても利用可能)
   createScenario(
     scenario: Omit<Scenario, 'id' | 'createdAt' | 'updatedAt' | 'dictionaryEntries'> & { dictionaryEntries?: DictionaryEntry[] }
   ): string {
-    const newScenario: Scenario = {
-      ...scenario,
-      dictionaryEntries: scenario.dictionaryEntries ?? [],
-      id: Date.now().toString(),
-      createdAt: new Date(),
-      updatedAt: new Date()
+    const projectId = `proj-${Date.now()}`
+    const mainTextId = 't-main'
+    
+    // 新しいプロジェクトを作成
+    const newProject: ProjectTextRelation = {
+      id: projectId,
+      name: scenario.title,
+      main: `${scenario.title}.md`,
+      ai_policy: {
+        read: 'allow',
+        quote: 'internal',
+        write: 'deny',
+        scope: ['local'],
+        until: null
+      },
+      texts: [
+        {
+          id: mainTextId,
+          path: `texts/${scenario.title}.md`,
+          tags: []
+        }
+      ],
+      tags: scenario.tags || [],
+      tag_docs: {},
+      libraly: scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0 ? ['辞書'] : undefined,
+      lib_docs: scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0 ? {
+        '辞書': { path: 'tags/辞書.md' }
+      } : undefined
     }
-    this.scenarios.push(newScenario)
+    
+    this.projects.push(newProject)
+    this.setProjectTextContent(projectId, mainTextId, scenario.content)
+    
+    if (scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0) {
+      this.projectDictionaries.set(projectId, scenario.dictionaryEntries)
+    }
+    
     this.saveToLocalStorage()
-    return newScenario.id
+    return projectId
   }
 
-  // Update a scenario
+  // Update a project (後方互換性のためupdateScenarioとしても利用可能)
   updateScenario(id: string, updates: Partial<Scenario>): void {
-    const index = this.scenarios.findIndex(s => s.id === id)
-    if (index !== -1) {
-      this.scenarios[index] = {
-        ...this.scenarios[index],
-        ...updates,
-        updatedAt: new Date()
-      }
-      this.saveToLocalStorage()
+    const project = this.getProject(id)
+    if (!project) return
+    
+    // プロジェクト名の更新
+    if (updates.title) {
+      project.name = updates.title
+      project.main = `${updates.title}.md`
     }
+    
+    // タグの更新
+    if (updates.tags) {
+      project.tags = updates.tags
+    }
+    
+    // コンテンツの更新
+    if (updates.content !== undefined) {
+      const mainTextId = project.texts[0]?.id || 't-main'
+      this.setProjectTextContent(id, mainTextId, updates.content)
+    }
+    
+    // 辞書の更新
+    if (updates.dictionaryEntries) {
+      this.projectDictionaries.set(id, updates.dictionaryEntries)
+      // 辞書がある場合はlibralyとlib_docsを更新
+      if (updates.dictionaryEntries.length > 0) {
+        project.libraly = ['辞書']
+        project.lib_docs = {
+          '辞書': { path: 'tags/辞書.md' }
+        }
+      } else {
+        project.libraly = undefined
+        project.lib_docs = undefined
+      }
+    }
+    
+    this.saveToLocalStorage()
   }
 
-  addDictionaryEntry(scenarioId: string, entry: { term: string; description: string }): DictionaryEntry | null {
-    const scenario = this.getScenario(scenarioId)
-    if (!scenario) return null
+  // プロジェクトレベルの辞書エントリを追加
+  addDictionaryEntry(projectId: string, entry: { term: string; description: string }): DictionaryEntry | null {
+    const project = this.getProject(projectId)
+    if (!project) return null
+    
     const newEntry: DictionaryEntry = {
       id: Date.now().toString(),
       ...entry,
       createdAt: new Date()
     }
-    const entries = scenario.dictionaryEntries ?? []
-    scenario.dictionaryEntries = [...entries, newEntry]
-    this.updateScenario(scenarioId, { dictionaryEntries: scenario.dictionaryEntries })
+    
+    const entries = this.projectDictionaries.get(projectId) || []
+    this.projectDictionaries.set(projectId, [...entries, newEntry])
+    this.saveToLocalStorage()
     return newEntry
   }
 
-  removeDictionaryEntry(scenarioId: string, entryId: string): void {
-    const scenario = this.getScenario(scenarioId)
-    if (!scenario || !scenario.dictionaryEntries) return
-    scenario.dictionaryEntries = scenario.dictionaryEntries.filter(entry => entry.id !== entryId)
-    this.updateScenario(scenarioId, { dictionaryEntries: scenario.dictionaryEntries })
+  // プロジェクトレベルの辞書エントリを削除
+  removeDictionaryEntry(projectId: string, entryId: string): void {
+    const entries = this.projectDictionaries.get(projectId) || []
+    this.projectDictionaries.set(projectId, entries.filter(entry => entry.id !== entryId))
+    this.saveToLocalStorage()
   }
 
+  // プロジェクトレベルの辞書エントリを更新
   updateDictionaryEntry(
-    scenarioId: string,
+    projectId: string,
     entryId: string,
     entry: { term: string; description: string }
   ): DictionaryEntry | null {
-    const scenario = this.getScenario(scenarioId)
-    if (!scenario || !scenario.dictionaryEntries) return null
-
-    scenario.dictionaryEntries = scenario.dictionaryEntries.map(item =>
+    const entries = this.projectDictionaries.get(projectId) || []
+    const updated = entries.map(item =>
       item.id === entryId
         ? {
             ...item,
@@ -175,9 +343,14 @@ class MockDataService {
           }
         : item
     )
+    this.projectDictionaries.set(projectId, updated)
+    this.saveToLocalStorage()
+    return updated.find(item => item.id === entryId) ?? null
+  }
 
-    this.updateScenario(scenarioId, { dictionaryEntries: scenario.dictionaryEntries })
-    return scenario.dictionaryEntries.find(item => item.id === entryId) ?? null
+  // プロジェクトレベルの辞書エントリ一覧を取得
+  getProjectDictionary(projectId: string): DictionaryEntry[] {
+    return this.projectDictionaries.get(projectId) || []
   }
 
   // Delete a scenario
@@ -200,32 +373,79 @@ class MockDataService {
 
   // Load from localStorage
   loadFromLocalStorage(): void {
-    const saved = localStorage.getItem('mockScenarios')
-    if (saved) {
+    // プロジェクトデータの読み込み
+    const savedProjects = localStorage.getItem('mockProjects')
+    if (savedProjects) {
       try {
-        const parsed = JSON.parse(saved)
-        this.scenarios = parsed.map((s: any) => ({
-          ...s,
-          createdAt: new Date(s.createdAt),
-          updatedAt: new Date(s.updatedAt),
-          dictionaryEntries: (s.dictionaryEntries ?? []).map((entry: any) => ({
-            ...entry,
-            createdAt: new Date(entry.createdAt)
-          }))
-        }))
+        this.projects = JSON.parse(savedProjects)
       } catch (error) {
-        console.error('Error loading scenarios from localStorage:', error)
+        console.error('Error loading projects from localStorage:', error)
+      }
+    }
+    
+    // テキストコンテンツの読み込み
+    const savedContents = localStorage.getItem('mockProjectTextContents')
+    if (savedContents) {
+      try {
+        const parsed = JSON.parse(savedContents)
+        this.projectTextContents = new Map(
+          Object.entries(parsed).map(([projectId, contents]: [string, any]) => [
+            projectId,
+            new Map(Object.entries(contents))
+          ])
+        )
+      } catch (error) {
+        console.error('Error loading project text contents from localStorage:', error)
+      }
+    }
+    
+    // 辞書データの読み込み
+    const savedDictionaries = localStorage.getItem('mockProjectDictionaries')
+    if (savedDictionaries) {
+      try {
+        const parsed = JSON.parse(savedDictionaries)
+        this.projectDictionaries = new Map(
+          Object.entries(parsed).map(([projectId, entries]: [string, any]) => [
+            projectId,
+            entries.map((entry: any) => ({
+              ...entry,
+              createdAt: new Date(entry.createdAt)
+            }))
+          ])
+        )
+      } catch (error) {
+        console.error('Error loading project dictionaries from localStorage:', error)
       }
     }
   }
 
   // Save to localStorage
   private saveToLocalStorage(): void {
-    localStorage.setItem('mockScenarios', JSON.stringify(this.scenarios))
+    // プロジェクトデータの保存
+    localStorage.setItem('mockProjects', JSON.stringify(this.projects))
+    
+    // テキストコンテンツの保存
+    const contentsObj: Record<string, Record<string, string>> = {}
+    this.projectTextContents.forEach((contents, projectId) => {
+      contentsObj[projectId] = Object.fromEntries(contents)
+    })
+    localStorage.setItem('mockProjectTextContents', JSON.stringify(contentsObj))
+    
+    // 辞書データの保存
+    const dictionariesObj: Record<string, DictionaryEntry[]> = {}
+    this.projectDictionaries.forEach((entries, projectId) => {
+      dictionariesObj[projectId] = entries
+    })
+    localStorage.setItem('mockProjectDictionaries', JSON.stringify(dictionariesObj))
   }
 
   // Initialize service
   constructor() {
+    // 初期プロジェクトデータを設定
+    this.projects = [...mockProjects]
+    this.projectTextContents = new Map(projectTextContents)
+    
+    // localStorageからデータを読み込む（既存データがあれば上書き）
     this.loadFromLocalStorage()
   }
 }

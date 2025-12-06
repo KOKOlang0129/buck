@@ -107,6 +107,33 @@ export interface LibraryDocument {
 
 /**
  * プロジェクトとテキストの関係を定義するJSON構造
+ * 
+ * 例:
+ * {
+ *   "id": "proj-001",
+ *   "name": "プロジェクト名",
+ *   "main": "プロジェクト名.md",
+ *   "ai_policy": {
+ *     "read": "allow",
+ *     "quote": "internal",
+ *     "write": "deny",
+ *     "scope": ["local"],
+ *     "until": null
+ *   },
+ *   "texts": [
+ *     { "id": "t-intro", "path": "texts/intro.md", "tags": ["overview"] },
+ *     { "id": "t-qa", "path": "texts/qa.md", "tags": ["faq", "support"], "ai": { "read": "deny" } }
+ *   ],
+ *   "tags": ["overview", "faq", "support", "internal"],
+ *   "tag_docs": {
+ *     "overview": { "path": "tags/overview.md" },
+ *     "faq": { "path": "tags/faq.md", "ai": { "read": "allow", "quote": "allow" } }
+ *   },
+ *   "libraly": ["辞書"],
+ *   "lib_docs": {
+ *     "辞書": { "path": "tags/辞書.md" }
+ *   }
+ * }
  */
 export interface ProjectTextRelation {
   id: string
@@ -116,7 +143,71 @@ export interface ProjectTextRelation {
   texts: TextDocument[] // テキストドキュメントの配列
   tags: string[] // プロジェクト全体で利用可能なタグのリスト
   tag_docs: Record<string, TagDocument> // タグごとのドキュメント
-  library?: string[] // ライブラリのリスト（例: ["辞書"]）
+  libraly?: string[] // ライブラリのリスト（例: ["辞書"]）- JSONでは"libraly"のスペルを使用
   lib_docs?: Record<string, LibraryDocument> // ライブラリごとのドキュメント
+}
+
+/**
+ * プロジェクト構造
+ * スクリーンショットに基づく構造定義
+ * 
+ * プロジェクト
+ * ├─ ユーザー作成領域
+ * │  ├─ 本文群（texts: TextDocument[]）
+ * │  │  ├─ プロジェクト内テキスト
+ * │  │  └─ ユーザー辞書（本文群内の辞書参照）
+ * │  ├─ 辞書（dictionary: DictionaryEntry[]）- プロジェクトレベル
+ * │  ├─ タグ（tags: string[]）- プロジェクトレベル
+ * │  ├─ あらすじ（synopsis: string）- プロジェクトレベル
+ * │  ├─ note（note: string）- プロジェクトレベル
+ * │  └─ など（その他のメタデータ）
+ * └─ AI作成領域
+ *    └─ AI生成テキスト（generatedTexts）
+ */
+export interface Project {
+  id: string
+  name: string
+  authorId: string
+  createdAt: Date
+  updatedAt: Date
+  isPublic: boolean
+  
+  // ユーザー作成領域
+  userCreated: {
+    // 本文群（複数のテキスト）
+    texts: TextDocument[]
+    // プロジェクトレベルのメタデータ
+    dictionary: DictionaryEntry[] // 辞書（プロジェクトレベル）
+    tags: string[] // タグ（プロジェクトレベル）
+    synopsis?: string // あらすじ（プロジェクトレベル）
+    note?: string // note（プロジェクトレベル）
+    // その他のメタデータ
+    [key: string]: any
+  }
+  
+  // AI作成領域
+  aiCreated: {
+    // AI生成テキスト
+    generatedTexts: Array<{
+      id: string
+      content: string
+      prompt?: string
+      createdAt: Date
+      aiPolicy?: AIPolicy
+    }>
+  }
+  
+  // プロジェクト全体のAIポリシー
+  ai_policy: AIPolicy
+}
+
+/**
+ * 辞書エントリ（プロジェクトレベル）
+ */
+export interface DictionaryEntry {
+  id: string
+  term: string
+  description: string
+  createdAt: Date
 }
 
