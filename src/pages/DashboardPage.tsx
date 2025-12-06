@@ -103,7 +103,43 @@ const DashboardPage: React.FC = () => {
 
   React.useEffect(() => {
     if (selectedScenario) {
-      setEditorContent(selectedScenario.content)
+      // 既存のコンテンツをチェックして、章が4つ未満の場合は追加
+      let currentContent = selectedScenario.content || ''
+      
+      // 「見出しレベル」で始まる行を削除
+      const lines = currentContent.split('\n')
+      const filteredLines = lines.filter(line => {
+        const trimmed = line.trim()
+        return !trimmed.match(/^#+\s*見出しレベル/)
+      })
+      currentContent = filteredLines.join('\n')
+      
+      const outlineSections = parseOutlineSections(currentContent)
+      const chapterCount = outlineSections.filter(section => section.level === 2).length
+      
+      let contentToSet = currentContent
+      
+      // 章が4つ未満の場合、4つの章を追加または置き換え
+      if (chapterCount < 4) {
+        const defaultChapters = `## 第一章\n\nここに第一章の内容を記述してください。\n\n## 第二章\n\nここに第二章の内容を記述してください。\n\n## 第三章\n\nここに第三章の内容を記述してください。\n\n## 第四章\n\nここに第四章の内容を記述してください。\n`
+        
+        // 既存のコンテンツが空または非常に短い場合は、4つの章で置き換え
+        if (!currentContent.trim() || currentContent.trim().length < 50) {
+          contentToSet = defaultChapters
+        } else {
+          // 既存のコンテンツがある場合は、その後に追加
+          contentToSet = currentContent.trim() + '\n\n' + defaultChapters
+        }
+        
+        // コンテンツを更新
+        if (user) {
+          mockDataService.updateScenario(selectedScenario.id, {
+            content: contentToSet
+          })
+        }
+      }
+      
+      setEditorContent(contentToSet)
       setProjectName(selectedScenario.title)
       setDictionaryItems(selectedScenario.dictionaryEntries ?? [])
     } else {
@@ -111,7 +147,7 @@ const DashboardPage: React.FC = () => {
       setProjectName('')
       setDictionaryItems([])
     }
-  }, [selectedScenario])
+  }, [selectedScenario, user])
 
   React.useEffect(() => {
     if (viewMode === 'preview' && previewLayout !== 'preview') {
@@ -155,9 +191,28 @@ const DashboardPage: React.FC = () => {
 
   const handleCreateScenario = () => {
     if (!user) return
+    
+    // 4つの章を含むデフォルトコンテンツを生成
+    const defaultContent = `## 第一章
+
+ここに第一章の内容を記述してください。
+
+## 第二章
+
+ここに第二章の内容を記述してください。
+
+## 第三章
+
+ここに第三章の内容を記述してください。
+
+## 第四章
+
+ここに第四章の内容を記述してください。
+`
+    
     const newId = mockDataService.createScenario({
       title: '新しいプロジェクト',
-      content: 'ここに新しいシナリオを作成してください。',
+      content: defaultContent,
       tags: [],
       isPublic: false,
       authorId: user.uid
@@ -196,7 +251,7 @@ const DashboardPage: React.FC = () => {
           {
             id: 't-main',
             path: mainFilePath,
-            tags: scenario.tags || []
+            tags: [] // テキストにはタグを紐付けない（プロジェクトレベルにのみ存在）
           }
         ],
         tags: Array.from(new Set(scenario.tags || [])),
@@ -277,15 +332,38 @@ const DashboardPage: React.FC = () => {
     try {
       const { project, files } = await buildProjectExportJson(selectedScenario)
       
+      // エクスポート用のプロジェクトデータを作成（texts[]からtagsを削除）
+      const exportProject = {
+        ...project,
+        texts: project.texts.map(text => {
+          const { tags, ...textWithoutTags } = text
+          return textWithoutTags
+        })
+      }
+      
       // ZIPファイルを作成
       const zip = new JSZip()
       
-      // プロジェクトJSONを追加
-      zip.file('project.json', JSON.stringify(project, null, 2))
+      // 1. project.json - プロジェクトデータ全体（texts[]からtagsを削除済み）
+      zip.file('project.json', JSON.stringify(exportProject, null, 2))
       
-      // すべてのテキストファイルを追加
+      // 2. texts/*.md - すべてのテキストファイル
       for (const [filePath, content] of Object.entries(files)) {
         zip.file(filePath, content)
+      }
+      
+      // 3. dictionary.json - 辞書データ（プロジェクトレベル）
+      const dictionary = mockDataService.getProjectDictionary(selectedScenario.id)
+      if (dictionary.length > 0) {
+        zip.file('dictionary.json', JSON.stringify(dictionary, null, 2))
+      }
+      
+      // 4. tags.json - タグデータ（プロジェクトレベル）
+      if (project.tags && project.tags.length > 0) {
+        zip.file('tags.json', JSON.stringify({
+          tags: project.tags,
+          tag_docs: project.tag_docs || {}
+        }, null, 2))
       }
       
       // ZIPファイルを生成してダウンロード
@@ -293,8 +371,10 @@ const DashboardPage: React.FC = () => {
       const url = URL.createObjectURL(zipBlob)
       const link = document.createElement('a')
       const safeTitle = selectedScenario.title || 'project'
+      // ファイル名に使用できない文字を除去
+      const sanitizedTitle = safeTitle.replace(/[<>:"/\\|?*]/g, '_')
       link.href = url
-      link.download = `${safeTitle}-export.zip`
+      link.download = `${sanitizedTitle}-export.zip`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
@@ -513,10 +593,20 @@ const DashboardPage: React.FC = () => {
 
   if (isLoadingScenarios) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20">
-        <div className="flex flex-col items-center gap-4">
-          <div className="animate-spin rounded-full h-16 w-16 border-4 border-slate-200 border-t-blue-500" />
-          <p className="text-sm font-semibold text-slate-600">読み込み中...</p>
+      <div className="h-screen w-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-indigo-50/20 via-purple-50/10 to-pink-50/20 relative overflow-hidden">
+        {/* 装飾的な背景要素 */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-br from-indigo-400/20 to-purple-400/20 rounded-full blur-3xl animate-pulse"></div>
+        </div>
+        <div className="flex flex-col items-center gap-6 relative z-10">
+          <div className="relative">
+            <div className="animate-spin rounded-full h-20 w-20 border-4 border-slate-200/50 border-t-indigo-500 border-r-purple-500" />
+            <div className="absolute inset-0 animate-spin rounded-full h-20 w-20 border-4 border-transparent border-b-pink-500 border-l-emerald-500" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+          </div>
+          <div className="text-center">
+            <p className="text-base font-bold text-slate-700 mb-1">読み込み中...</p>
+            <p className="text-xs text-slate-500">プロジェクトを読み込んでいます</p>
+          </div>
         </div>
       </div>
     )
@@ -527,13 +617,19 @@ const DashboardPage: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20">
-      <div className="h-full w-full flex flex-col px-6 py-5">
-        {/* Header */}
-        <div className="mb-5 flex-shrink-0">
+    <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-slate-50 via-indigo-50/20 via-purple-50/10 to-pink-50/20 relative">
+      {/* 装飾的な背景要素 */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-400/10 to-purple-400/10 rounded-full blur-3xl"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-indigo-400/10 to-pink-400/10 rounded-full blur-3xl"></div>
+      </div>
+      
+      <div className="h-full w-full flex flex-col px-6 py-6 relative z-10">
+        {/* Header - モダンなデザイン */}
+        <div className="mb-6 flex-shrink-0">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex-1 max-w-md">
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5 tracking-wide uppercase">
+              <label className="block text-xs font-bold text-slate-700 mb-2 tracking-wider uppercase">
                 プロジェクトの名前
               </label>
               <input
@@ -541,21 +637,21 @@ const DashboardPage: React.FC = () => {
                 value={projectName}
                 onChange={(e) => handleProjectNameChange(e.target.value)}
                 placeholder="プロジェクト名を入力"
-                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-800 placeholder-slate-400 shadow-sm hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200"
+                className="w-full px-5 py-3 bg-white/95 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-base text-slate-800 placeholder-slate-400 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300/50 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-300"
               />
             </div>
-            <div className="flex items-center space-x-2.5">
+            <div className="flex items-center gap-3">
               <Button 
                 variant="outline" 
-                className="px-5 py-2.5 bg-white/80 backdrop-blur-sm border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-white hover:shadow-md hover:border-slate-300 transition-all duration-200" 
+                className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300 hover:scale-105 transition-all duration-300 group" 
                 onClick={() => setIsSettingsOpen(true)}
               >
-                <Settings className="h-4 w-4 mr-2" />
+                <Settings className="h-4 w-4 mr-2 group-hover:rotate-90 transition-transform duration-300" />
                 設定
               </Button>
               <Button 
                 variant="outline" 
-                className="px-5 py-2.5 bg-white/80 backdrop-blur-sm border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-white hover:shadow-md hover:border-slate-300 transition-all duration-200" 
+                className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white border-0 rounded-2xl text-sm font-semibold shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 hover:scale-105 transition-all duration-300" 
                 onClick={handleExportProject}
               >
                 <Download className="h-4 w-4 mr-2" />
@@ -563,173 +659,195 @@ const DashboardPage: React.FC = () => {
               </Button>
               <Button 
                 variant="outline" 
-                className="px-5 py-2.5 bg-white/80 backdrop-blur-sm border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-white hover:shadow-md hover:border-slate-300 transition-all duration-200" 
+                className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-red-300 hover:scale-105 transition-all duration-300 group" 
                 onClick={handleSignOut}
               >
-                <LogOut className="h-4 w-4 mr-2" />
+                <LogOut className="h-4 w-4 mr-2 group-hover:translate-x-1 transition-transform duration-300" />
                 ログアウト
               </Button>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 gap-5 xl:grid-cols-[clamp(240px,18vw,280px)_minmax(0,1fr)_clamp(260px,21vw,380px)] min-h-0">
-          {/* Project List */}
-          <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col shadow-lg shadow-slate-200/50 min-h-0">
-            <h2 className="text-xs font-bold text-slate-600 mb-4 tracking-wider uppercase">プロジェクト一覧</h2>
-            <div className="space-y-2 flex-1 overflow-y-auto scrollable pr-1 min-h-0">
-              {scenarios.length === 0 ? (
-                <p className="text-sm text-slate-400 italic py-8 text-center">まだプロジェクトがありません</p>
-              ) : (
-                scenarios.map((scenario) => (
-                  <button
-                    key={scenario.id}
-                    onClick={() => setSelectedScenarioId(scenario.id)}
-                    className={`w-full text-left px-4 py-3 rounded-xl border-2 transition-all duration-200 ${
-                      selectedScenarioId === scenario.id
-                        ? 'border-blue-500 bg-gradient-to-r from-blue-500 to-indigo-500 text-white shadow-lg shadow-blue-500/30 scale-[1.02]'
-                        : 'border-slate-200 bg-white/60 hover:bg-white hover:border-slate-300 hover:shadow-md text-slate-700'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold truncate">{scenario.title}</p>
-                  </button>
-                ))
-              )}
+        <div className="flex-1 grid grid-cols-1 gap-6 xl:grid-cols-[clamp(260px,20vw,300px)_minmax(0,1fr)_clamp(280px,22vw,400px)] min-h-0">
+          {/* Project List - モダンなカードデザイン */}
+          <aside className="bg-white/95 backdrop-blur-xl border-2 border-slate-200/60 rounded-3xl p-6 flex flex-col shadow-2xl shadow-slate-300/30 min-h-0 relative overflow-hidden">
+            {/* 装飾的なグラデーション */}
+            <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-400/10 to-purple-400/10 rounded-full blur-2xl -mr-16 -mt-16"></div>
+            
+            <div className="relative z-10">
+              <h2 className="text-sm font-bold text-slate-700 mb-5 tracking-wider uppercase flex items-center gap-2">
+                <div className="w-1 h-5 bg-gradient-to-b from-indigo-500 to-purple-500 rounded-full"></div>
+                プロジェクト一覧
+              </h2>
+              <div className="space-y-3 flex-1 overflow-y-auto scrollable pr-2 min-h-0">
+                {scenarios.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center">
+                      <Plus className="h-8 w-8 text-slate-400" />
+                    </div>
+                    <p className="text-sm text-slate-500 font-medium">まだプロジェクトがありません</p>
+                  </div>
+                ) : (
+                  scenarios.map((scenario) => (
+                    <button
+                      key={scenario.id}
+                      onClick={() => setSelectedScenarioId(scenario.id)}
+                      className={`w-full text-left px-5 py-4 rounded-2xl border-2 transition-all duration-300 transform ${
+                        selectedScenarioId === scenario.id
+                          ? 'border-indigo-500 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white shadow-xl shadow-indigo-500/40 scale-[1.02]'
+                          : 'border-slate-200/80 bg-white/80 hover:bg-white hover:border-indigo-300/50 hover:shadow-lg hover:shadow-slate-200/50 hover:scale-[1.01] text-slate-700'
+                      }`}
+                    >
+                      <p className="text-sm font-bold truncate">{scenario.title}</p>
+                    </button>
+                  ))
+                )}
+              </div>
+              <Button
+                variant="outline"
+                onClick={handleCreateScenario}
+                className="mt-5 w-full justify-center py-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white border-0 rounded-2xl font-bold shadow-xl shadow-indigo-500/40 hover:shadow-2xl hover:shadow-indigo-500/50 hover:scale-105 transition-all duration-300 group"
+              >
+                <Plus className="h-5 w-5 mr-2 group-hover:rotate-90 transition-transform duration-300" />
+                新規作成
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              onClick={handleCreateScenario}
-              className="mt-4 w-full justify-center py-3 bg-gradient-to-r from-blue-500 to-indigo-500 text-white border-0 rounded-xl font-semibold shadow-md shadow-blue-500/30 hover:shadow-lg hover:shadow-blue-500/40 hover:scale-[1.02] transition-all duration-200"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              新規作成
-            </Button>
           </aside>
 
-          {/* Main Editor */}
-          <section className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col shadow-lg shadow-slate-200/50 min-h-0">
-            <div className="flex items-center flex-wrap gap-3 mb-4 flex-shrink-0">
-              <span className="text-xs font-bold text-slate-600 tracking-wider uppercase">ViewMode</span>
-              <div className="flex flex-wrap gap-2">
-                {VIEW_MODES.map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setViewMode(mode)}
-                    className={`px-4 py-2 rounded-xl border-2 text-sm font-semibold capitalize transition-all duration-200 ${
-                      viewMode === mode
-                        ? (mode === 'plain' || mode === 'outline' || mode === 'preview' || mode === 'markdown')
-                          ? 'border-emerald-500 bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md shadow-emerald-500/30 scale-105'
-                          : 'border-slate-800 bg-slate-800 text-white shadow-md'
-                        : 'border-slate-200 bg-white/80 text-slate-600 hover:bg-white hover:border-slate-300 hover:shadow-sm'
-                    }`}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
-              {(viewMode === 'markdown' || viewMode === 'preview') && (
+          {/* Main Editor - 洗練されたデザイン */}
+          <section className="bg-white/95 backdrop-blur-xl border-2 border-slate-200/60 rounded-3xl p-6 flex flex-col shadow-2xl shadow-slate-300/30 min-h-0 relative overflow-hidden">
+            {/* 装飾的なグラデーション */}
+            <div className="absolute bottom-0 left-0 w-40 h-40 bg-gradient-to-tr from-emerald-400/10 to-teal-400/10 rounded-full blur-2xl -ml-20 -mb-20"></div>
+            
+            <div className="relative z-10 flex flex-col min-h-0">
+              <div className="flex items-center flex-wrap gap-4 mb-5 flex-shrink-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">表示</span>
-                  <div className="inline-flex rounded-xl border-2 border-slate-200 overflow-hidden bg-white/80">
-                    {PREVIEW_LAYOUTS.map((layout) => (
-                      <button
-                        key={layout}
-                        type="button"
-                        onClick={() => handlePreviewLayoutSelect(layout)}
-                        className={`px-3 py-1.5 text-xs font-semibold capitalize transition-all duration-200 ${
-                          previewLayout === layout
-                            ? 'bg-gradient-to-r from-slate-700 to-slate-800 text-white shadow-inner'
-                            : 'bg-transparent text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        {layout === 'edit' ? '編集' : layout === 'split' ? '分割' : 'プレビュー'}
-                      </button>
-                    ))}
-                  </div>
+                  <div className="w-1 h-6 bg-gradient-to-b from-emerald-500 to-teal-500 rounded-full"></div>
+                  <span className="text-xs font-bold text-slate-700 tracking-wider uppercase">ViewMode</span>
                 </div>
-              )}
-              <button
-                type="button"
-                onClick={handleInjectMarkdownSample}
-                className="text-xs font-semibold border-2 border-dashed border-slate-300 rounded-xl px-3 py-1.5 text-slate-500 hover:bg-slate-50 hover:border-slate-400 transition-all duration-200"
-              >
-                Markdownテスト挿入
-              </button>
-            </div>
+                <div className="flex flex-wrap gap-2.5">
+                  {VIEW_MODES.map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setViewMode(mode)}
+                      className={`px-5 py-2.5 rounded-2xl border-2 text-sm font-bold capitalize transition-all duration-300 transform ${
+                        viewMode === mode
+                          ? 'border-emerald-500 bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-white shadow-xl shadow-emerald-500/40 scale-105'
+                          : 'border-slate-200/80 bg-white/80 text-slate-600 hover:bg-white hover:border-emerald-300/50 hover:shadow-lg hover:shadow-slate-200/50 hover:scale-105'
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+                {(viewMode === 'markdown' || viewMode === 'preview') && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">表示</span>
+                    <div className="inline-flex rounded-2xl border-2 border-slate-200/80 overflow-hidden bg-white/90 shadow-lg shadow-slate-200/50">
+                      {PREVIEW_LAYOUTS.map((layout) => (
+                        <button
+                          key={layout}
+                          type="button"
+                          onClick={() => handlePreviewLayoutSelect(layout)}
+                          className={`px-4 py-2 text-xs font-bold capitalize transition-all duration-300 ${
+                            previewLayout === layout
+                              ? 'bg-gradient-to-r from-slate-700 to-slate-800 text-white shadow-inner'
+                              : 'bg-transparent text-slate-600 hover:bg-slate-50'
+                          }`}
+                        >
+                          {layout === 'edit' ? '編集' : layout === 'split' ? '分割' : 'プレビュー'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleInjectMarkdownSample}
+                  className="text-xs font-bold border-2 border-dashed border-slate-300/80 rounded-2xl px-4 py-2 text-slate-600 hover:bg-slate-50 hover:border-indigo-300 hover:text-indigo-600 transition-all duration-300"
+                >
+                  Markdownテスト挿入
+                </button>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-[240px_minmax(0,1fr)] gap-4 flex-1 min-h-0">
-              {(viewMode === 'outline' || viewMode === 'plain' || viewMode === 'preview' || viewMode === 'markdown' || viewMode === null) && (
-                <div className="border-2 border-slate-200/60 rounded-xl p-4 bg-gradient-to-br from-slate-50/80 to-blue-50/30 overflow-y-auto scrollable min-h-0">
-                  <h3 className="text-xs font-bold text-slate-600 mb-3 tracking-wider uppercase">Outline</h3>
-                  <div className="space-y-1 text-sm text-gray-600">
-                    {outlineSections.length > 0 ? (
-                      outlineSections.map((item) => {
-                        const isExpanded = expandedChapters.has(item.id)
-                        return (
+              <div className="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)] gap-5 flex-1 min-h-0">
+                {/* アウトライン: すべてのビューで常に表示・更新可能 - モダンなデザイン */}
+                <div className="border-2 border-slate-200/60 rounded-2xl p-5 bg-gradient-to-br from-slate-50/90 via-indigo-50/20 to-purple-50/20 overflow-y-auto scrollable min-h-0 shadow-lg shadow-slate-200/30">
+                  <h3 className="text-xs font-bold text-slate-700 mb-4 tracking-wider uppercase flex items-center gap-2">
+                    <div className="w-1 h-4 bg-gradient-to-b from-indigo-500 to-purple-500 rounded-full"></div>
+                    Outline
+                  </h3>
+                <div className="space-y-1 text-sm text-gray-600">
+                  {outlineSections.length > 0 ? (
+                    outlineSections.map((item) => {
+                      const isExpanded = expandedChapters.has(item.id)
+                      return (
+                        <div
+                          key={item.id}
+                          className={`flex items-center gap-1 group ${
+                            dragOverSectionId === item.id ? 'bg-blue-50 rounded' : ''
+                          }`}
+                        >
                           <div
-                            key={item.id}
-                            className={`flex items-center gap-1 group ${
-                              dragOverSectionId === item.id ? 'bg-blue-50 rounded' : ''
-                            }`}
+                            className={`flex-1 flex items-center gap-2 cursor-move hover:bg-white/80 px-4 py-2.5 rounded-xl transition-all duration-300 ${
+                              item.level <= 1 ? 'pl-0' : item.level === 2 ? 'pl-6' : 'pl-12'
+                            } ${dragOverSectionId === item.id ? 'bg-indigo-100/70 border-2 border-indigo-400 shadow-md' : ''}`}
+                            draggable
+                            onDragStart={(e) => {
+                              setDraggingSectionId(item.id)
+                              e.dataTransfer.effectAllowed = 'move'
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault()
+                              e.dataTransfer.dropEffect = 'move'
+                              if (draggingSectionId && draggingSectionId !== item.id) {
+                                setDragOverSectionId(item.id)
+                              }
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault()
+                              if (draggingSectionId && draggingSectionId !== item.id) {
+                                handleReorderSection(draggingSectionId, item.id)
+                              }
+                              setDragOverSectionId(null)
+                              setDraggingSectionId(null)
+                            }}
+                            onDragEnd={() => {
+                              setDragOverSectionId(null)
+                              setDraggingSectionId(null)
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverSectionId === item.id) {
+                                setDragOverSectionId(null)
+                              }
+                            }}
+                            onClick={() => {
+                              // ドラッグ中でない場合のみトグル
+                              if (!draggingSectionId) {
+                                toggleChapter(item.id)
+                              }
+                            }}
                           >
-                            <div
-                              className={`flex-1 flex items-center gap-2 cursor-move hover:bg-white/60 px-3 py-2 rounded-lg transition-all duration-200 ${
-                                item.level <= 1 ? 'pl-0' : item.level === 2 ? 'pl-6' : 'pl-12'
-                              } ${dragOverSectionId === item.id ? 'bg-blue-100/50 border-2 border-blue-300' : ''}`}
-                              draggable
-                              onDragStart={(e) => {
-                                setDraggingSectionId(item.id)
-                                e.dataTransfer.effectAllowed = 'move'
-                              }}
-                              onDragOver={(e) => {
-                                e.preventDefault()
-                                e.dataTransfer.dropEffect = 'move'
-                                if (draggingSectionId && draggingSectionId !== item.id) {
-                                  setDragOverSectionId(item.id)
-                                }
-                              }}
-                              onDrop={(e) => {
-                                e.preventDefault()
-                                if (draggingSectionId && draggingSectionId !== item.id) {
-                                  handleReorderSection(draggingSectionId, item.id)
-                                }
-                                setDragOverSectionId(null)
-                                setDraggingSectionId(null)
-                              }}
-                              onDragEnd={() => {
-                                setDragOverSectionId(null)
-                                setDraggingSectionId(null)
-                              }}
-                              onDragLeave={() => {
-                                if (dragOverSectionId === item.id) {
-                                  setDragOverSectionId(null)
-                                }
-                              }}
-                              onClick={() => {
-                                // ドラッグ中でない場合のみトグル
-                                if (!draggingSectionId) {
-                                  toggleChapter(item.id)
-                                }
-                              }}
-                            >
-                              <span className="text-sm font-medium text-slate-700">{item.text}</span>
-                              {isExpanded && (
-                                <span className="text-xs text-slate-400 ml-1">▼</span>
-                              )}
-                              {!isExpanded && (
-                                <span className="text-xs text-slate-400 ml-1">▶</span>
-                              )}
-                            </div>
+                            <span className="text-sm font-semibold text-slate-700">{item.text}</span>
+                            {isExpanded && (
+                              <span className="text-xs text-indigo-500 ml-1 font-bold">▼</span>
+                            )}
+                            {!isExpanded && (
+                              <span className="text-xs text-slate-400 ml-1">▶</span>
+                            )}
                           </div>
-                        )
-                      })
-                    ) : (
-                      <p className="text-gray-400">アウトラインはまだありません。</p>
-                    )}
-                  </div>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <div className="py-8 text-center">
+                      <p className="text-sm text-slate-400 font-medium">アウトラインはまだありません。</p>
+                    </div>
+                  )}
                 </div>
-              )}
-              <div className={`border-2 border-slate-200/60 rounded-xl p-5 overflow-y-auto scrollable bg-white/80 backdrop-blur-sm min-h-0 ${(viewMode === 'outline' || viewMode === 'plain' || viewMode === 'preview' || viewMode === 'markdown' || viewMode === null) ? '' : 'md:col-span-2'}`}>
+              </div>
+              <div className="border-2 border-slate-200/60 rounded-2xl p-6 overflow-y-auto scrollable bg-white/90 backdrop-blur-sm min-h-0 shadow-lg shadow-slate-200/30">
                 {selectedScenario ? (
                   viewMode === null ? (
                     <div className="relative h-full min-h-[400px] flex items-center justify-center bg-white">
@@ -741,13 +859,13 @@ const DashboardPage: React.FC = () => {
                   ) : viewMode === 'outline' ? (
                     <div className="h-full min-h-[400px] flex flex-col">
                       {outlineSections.length > 0 ? (
-                        <div className="flex-1 space-y-3">
+                        <div className="flex-1 space-y-4">
                           {outlineSections.map((item, index) => {
                             return (
                               <div
                                 key={`outline-main-${item.id}-${index}`}
-                                className={`flex flex-col border-2 rounded-xl p-4 hover:border-slate-300 hover:shadow-md transition-all duration-200 cursor-move bg-white/80 backdrop-blur-sm ${
-                                  dragOverSectionId === item.id ? 'border-blue-400 bg-blue-50/80 shadow-lg shadow-blue-400/20 scale-[1.02]' : 'border-slate-200'
+                                className={`flex flex-col border-2 rounded-2xl p-5 hover:border-indigo-300/50 hover:shadow-xl hover:shadow-slate-200/50 transition-all duration-300 cursor-move bg-white/90 backdrop-blur-sm transform hover:scale-[1.01] ${
+                                  dragOverSectionId === item.id ? 'border-indigo-400 bg-gradient-to-br from-indigo-50/80 to-purple-50/50 shadow-2xl shadow-indigo-400/30 scale-[1.02]' : 'border-slate-200/80'
                                 }`}
                                 draggable
                                 onDragStart={() => setDraggingSectionId(item.id)}
@@ -777,14 +895,15 @@ const DashboardPage: React.FC = () => {
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="flex items-center gap-3">
-                                    <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
+                                    <span className="text-xs font-bold text-white bg-gradient-to-r from-indigo-500 to-purple-500 px-3 py-1.5 rounded-xl shadow-md shadow-indigo-500/30">
                                       {index + 1}章
                                     </span>
-                                    <span className="font-semibold text-slate-800">{item.text}</span>
+                                    <span className="font-bold text-slate-800 text-base">{item.text}</span>
                                   </div>
                                 </div>
-                                <p className="text-xs text-slate-400 mt-2 font-medium">
-                                  レベル: {item.level} / 開始行 {item.startLine + 1}
+                                <p className="text-xs text-slate-500 mt-3 font-semibold flex items-center gap-2">
+                                  <span className="px-2 py-0.5 bg-slate-100 rounded-md">レベル: {item.level}</span>
+                                  <span className="px-2 py-0.5 bg-slate-100 rounded-md">開始行: {item.startLine + 1}</span>
                                 </p>
                               </div>
                             )
@@ -795,11 +914,6 @@ const DashboardPage: React.FC = () => {
                           アウトラインはまだありません
                         </div>
                       )}
-                      <div className="mt-6 pt-4 border-t-2 border-slate-200/60 text-xs text-slate-500 space-y-1 bg-slate-50/50 rounded-lg p-3">
-                        <p className="font-semibold">いわゆるアウトラインエディタモード</p>
-                        <p>本文は折りたたまれている</p>
-                        <p>header要素をドラッグ・アンド・ドロップできる</p>
-                      </div>
                     </div>
                   ) : viewMode === 'plain' ? (
                     <div className="h-full flex flex-col min-h-0">
@@ -808,12 +922,6 @@ const DashboardPage: React.FC = () => {
                           <span className="text-slate-400 italic">ここにプレーンテキストで内容が表示されます...</span>
                         )}
                       </div>
-                      <div className="mt-4 pt-4 border-t-2 border-slate-200 text-xs text-slate-500 space-y-1 bg-slate-50/50 rounded-lg p-3">
-                        <p className="font-semibold">プレーンテキストモード</p>
-                        <p>markdownのレンダリングが使用されない</p>
-                        <p>読み・書き下ろしのためのモード</p>
-                        <p className="text-slate-400 mt-2">※ 編集はMarkdownモードで行ってください</p>
-                      </div>
                     </div>
                   ) : viewMode === 'preview' ? (
                   <div className="h-full min-h-0 overflow-y-auto scrollable">
@@ -821,11 +929,6 @@ const DashboardPage: React.FC = () => {
                         className="markdown-preview"
                         dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
                       />
-                      <div className="mt-6 pt-4 border-t-2 border-slate-200 text-xs text-slate-500 space-y-1 bg-slate-50/50 rounded-lg p-3">
-                        <p>このツールでは表現できないが、強調表示やリストなど</p>
-                        <p>markdownのレンダリング表示モード</p>
-                        <p>リンクや辞書などをハイライト表示</p>
-                      </div>
                     </div>
                   ) : viewMode === 'markdown' ? (
                     <div className="h-full flex flex-col min-h-0">
@@ -859,9 +962,6 @@ const DashboardPage: React.FC = () => {
                           placeholder="ここにMarkdown形式で内容を入力してください..."
                         />
                       )}
-                      <div className="mt-4 pt-4 border-t-2 border-slate-200 text-xs text-center text-slate-500 bg-slate-50/50 rounded-lg p-3">
-                        <p className="font-semibold">markdown 編集モード</p>
-                      </div>
                     </div>
                   ) : (
                     <div className="text-sm leading-relaxed whitespace-pre-wrap text-gray-700 font-mono">
@@ -869,11 +969,18 @@ const DashboardPage: React.FC = () => {
                     </div>
                   )
                 ) : (
-                  <div className="h-full flex items-center justify-center">
-                    <p className="text-sm text-slate-400 italic">プロジェクトを選択すると内容が表示されます</p>
+                  <div className="h-full flex flex-col items-center justify-center py-16">
+                    <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center mb-6 shadow-lg shadow-indigo-200/50">
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center shadow-xl shadow-indigo-500/30">
+                        <Plus className="h-6 w-6 text-white" />
+                      </div>
+                    </div>
+                    <p className="text-base font-bold text-slate-600 mb-2">プロジェクトを選択してください</p>
+                    <p className="text-sm text-slate-400">左側のプロジェクト一覧から選択すると内容が表示されます</p>
                   </div>
                 )}
               </div>
+            </div>
             </div>
           </section>
 
@@ -931,41 +1038,48 @@ const DashboardPage: React.FC = () => {
                 ))}
               </div>
 
-              {/* Action Buttons Grid */}
-              <div className="grid grid-cols-2 gap-2.5 mt-auto pt-4 border-t-2 border-slate-200/60">
+              {/* Action Buttons Grid - モダンなデザイン */}
+              <div className="grid grid-cols-2 gap-3 mt-auto pt-5 border-t-2 border-slate-200/60">
                 <button 
                   onClick={handleAddArticle}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
+                  className="border-2 border-slate-200/80 bg-white/90 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-indigo-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
                 >
-                  ＋ 文章の追加
+                  <span className="group-hover:text-indigo-600 transition-colors duration-300">＋ 文章の追加</span>
                 </button>
                 <button 
                   onClick={handleAddDictionary}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
+                  className="border-2 border-slate-200/80 bg-white/90 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-pink-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
                 >
-                  ＋ 辞書の追加
+                  <span className="group-hover:text-pink-600 transition-colors duration-300">＋ 辞書の追加</span>
                 </button>
                 <button 
                   onClick={handleAddTag}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
+                  className="border-2 border-slate-200/80 bg-white/90 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-purple-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
                 >
-                  ＋ タグの追加
+                  <span className="group-hover:text-purple-600 transition-colors duration-300">＋ タグの追加</span>
                 </button>
                 <button 
                   onClick={handleProofreadRange}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center justify-between"
+                  className="border-2 border-slate-200/80 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:from-emerald-500/20 hover:to-teal-500/20 hover:border-emerald-300/50 hover:shadow-xl hover:shadow-emerald-200/50 hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group"
                 >
-                  <span>範囲を校正</span>
-                  <ChevronRight className="h-4 w-4" />
+                  <span className="group-hover:text-emerald-600 transition-colors duration-300">範囲を校正</span>
+                  <ChevronRight className="h-4 w-4 group-hover:translate-x-1 group-hover:text-emerald-600 transition-all duration-300" />
                 </button>
               </div>
             </aside>
           ) : showDictionaryManager ? (
-            <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col space-y-3 shadow-lg shadow-slate-200/50 min-h-0 overflow-y-auto scrollable">
-              {/* あらすじ Window */}
-              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md">
-                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
-                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">あらすじ</h3>
+            <aside className="bg-white/95 backdrop-blur-xl border-2 border-slate-200/60 rounded-3xl p-6 flex flex-col space-y-4 shadow-2xl shadow-slate-300/30 min-h-0 overflow-y-auto scrollable relative overflow-hidden">
+              {/* 装飾的なグラデーション */}
+              <div className="absolute top-0 left-0 w-40 h-40 bg-gradient-to-br from-blue-400/10 to-cyan-400/10 rounded-full blur-2xl -ml-20 -mt-20"></div>
+              
+              <div className="relative z-10">
+                {/* あらすじ Window - モダンなデザイン */}
+                <div className="border-2 border-slate-200/60 rounded-2xl bg-gradient-to-br from-white/95 to-blue-50/30 shadow-xl shadow-slate-200/30 mb-4">
+                  <div className="flex items-center justify-between px-5 py-4 border-b-2 border-slate-200/60 bg-gradient-to-r from-blue-50/50 to-cyan-50/30 rounded-t-2xl">
+                    <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase flex items-center gap-2">
+                      <div className="w-1 h-4 bg-gradient-to-b from-blue-500 to-cyan-500 rounded-full"></div>
+                      あらすじ
+                    </h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseDictionaryManager}
@@ -992,10 +1106,13 @@ const DashboardPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Note Window */}
-              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md">
-                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
-                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">Note</h3>
+              {/* Note Window - モダンなデザイン */}
+              <div className="border-2 border-slate-200/60 rounded-2xl bg-gradient-to-br from-white/95 to-emerald-50/30 shadow-xl shadow-slate-200/30 mb-4">
+                <div className="flex items-center justify-between px-5 py-4 border-b-2 border-slate-200/60 bg-gradient-to-r from-emerald-50/50 to-teal-50/30 rounded-t-2xl">
+                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase flex items-center gap-2">
+                    <div className="w-1 h-4 bg-gradient-to-b from-emerald-500 to-teal-500 rounded-full"></div>
+                    Note
+                  </h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseDictionaryManager}
@@ -1022,10 +1139,13 @@ const DashboardPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* タグ Window */}
-              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md">
-                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
-                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">タグ</h3>
+              {/* タグ Window - モダンなデザイン */}
+              <div className="border-2 border-slate-200/60 rounded-2xl bg-gradient-to-br from-white/95 to-amber-50/30 shadow-xl shadow-slate-200/30 mb-4">
+                <div className="flex items-center justify-between px-5 py-4 border-b-2 border-slate-200/60 bg-gradient-to-r from-amber-50/50 to-orange-50/30 rounded-t-2xl">
+                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase flex items-center gap-2">
+                    <div className="w-1 h-4 bg-gradient-to-b from-amber-500 to-orange-500 rounded-full"></div>
+                    タグ
+                  </h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseDictionaryManager}
@@ -1043,83 +1163,96 @@ const DashboardPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <div className="px-4 py-3 flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-slate-600">タグ</span>
-                  <button className="px-3 py-1.5 bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 rounded-lg text-sm font-semibold text-white shadow-md hover:shadow-lg transition-all duration-200">
+                <div className="px-5 py-4 flex items-center gap-3 flex-wrap">
+                  <span className="text-sm font-bold text-slate-700">タグ</span>
+                  <button className="px-4 py-2 bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 hover:from-amber-600 hover:via-orange-600 hover:to-red-600 rounded-xl text-sm font-bold text-white shadow-lg shadow-amber-500/30 hover:shadow-xl hover:shadow-amber-500/40 hover:scale-105 transition-all duration-300">
                     Main
                   </button>
-                  <button className="px-3 py-1.5 border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-lg text-sm font-semibold text-slate-600 transition-all duration-200">
+                  <button className="px-4 py-2 border-2 border-slate-200/80 hover:border-indigo-300/50 hover:bg-indigo-50/50 rounded-xl text-sm font-bold text-slate-600 hover:text-indigo-600 transition-all duration-300 hover:scale-105">
                     +説明を追加
                   </button>
                 </div>
               </div>
 
-              {/* 辞書 Windows */}
+              {/* 辞書 Windows - モダンなデザイン */}
               {dictionaryItems.map((item) => (
-                <div key={item.id} className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-blue-50/30 shadow-md">
-                  <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-gradient-to-r from-blue-50/50 to-indigo-50/30 rounded-t-xl">
-                    <h3 className="text-sm font-bold text-slate-800">{item.term}</h3>
+                <div key={item.id} className="border-2 border-slate-200/60 rounded-2xl bg-gradient-to-br from-white/95 to-blue-50/40 shadow-xl shadow-slate-200/30 mb-4 transform hover:scale-[1.01] transition-all duration-300">
+                  <div className="flex items-center justify-between px-5 py-4 border-b-2 border-slate-200/60 bg-gradient-to-r from-blue-50/60 via-indigo-50/40 to-purple-50/30 rounded-t-2xl">
+                    <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                      <div className="w-1.5 h-5 bg-gradient-to-b from-blue-500 to-indigo-500 rounded-full"></div>
+                      {item.term}
+                    </h3>
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleEditDictionaryEntry(item)}
-                        className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-lg transition-all duration-200"
+                        className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-3 py-1.5 rounded-xl transition-all duration-300 hover:scale-105"
                         aria-label="辞書エントリを編集"
                       >
                         編集
                       </button>
                       <button
                         onClick={() => handleRemoveDictionaryEntry(item.id)}
-                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg p-1 transition-all duration-200"
+                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl p-1.5 transition-all duration-300 hover:scale-110"
                         aria-label="辞書エントリを削除"
                       >
                         <X className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
-                  <div className="px-4 py-3">
-                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{item.description}</p>
-                    <p className="text-xs text-slate-400 mt-3 font-medium">
-                      登録日: {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '-'}
-                    </p>
+                  <div className="px-5 py-4">
+                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-medium mb-3">{item.description}</p>
+                    <div className="flex items-center gap-2 pt-3 border-t border-slate-200/50">
+                      <span className="text-xs text-slate-500 font-semibold">
+                        登録日: {item.createdAt ? new Date(item.createdAt).toLocaleDateString('ja-JP') : '-'}
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))}
 
-              {/* Action Buttons Grid */}
-              <div className="grid grid-cols-2 gap-2.5 mt-auto pt-4 border-t-2 border-slate-200/60">
+              {/* Action Buttons Grid - モダンなデザイン */}
+              <div className="grid grid-cols-2 gap-3 mt-auto pt-5 border-t-2 border-slate-200/60">
                 <button 
                   onClick={handleAddArticle}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
+                  className="border-2 border-slate-200/80 bg-white/90 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-indigo-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
                 >
-                  ＋ 文章の追加
+                  <span className="group-hover:text-indigo-600 transition-colors duration-300">＋ 文章の追加</span>
                 </button>
                 <button 
                   onClick={handleAddDictionary}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
+                  className="border-2 border-slate-200/80 bg-white/90 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-pink-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
                 >
-                  ＋ 辞書の追加
+                  <span className="group-hover:text-pink-600 transition-colors duration-300">＋ 辞書の追加</span>
                 </button>
                 <button 
                   onClick={handleAddTag}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
+                  className="border-2 border-slate-200/80 bg-white/90 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-purple-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
                 >
-                  ＋ タグの追加
+                  <span className="group-hover:text-purple-600 transition-colors duration-300">＋ タグの追加</span>
                 </button>
                 <button 
                   onClick={handleProofreadRange}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center justify-between"
+                  className="border-2 border-slate-200/80 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:from-emerald-500/20 hover:to-teal-500/20 hover:border-emerald-300/50 hover:shadow-xl hover:shadow-emerald-200/50 hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group"
                 >
-                  <span>範囲を校正</span>
-                  <ChevronRight className="h-4 w-4" />
+                  <span className="group-hover:text-emerald-600 transition-colors duration-300">範囲を校正</span>
+                  <ChevronRight className="h-4 w-4 group-hover:translate-x-1 group-hover:text-emerald-600 transition-all duration-300" />
                 </button>
+              </div>
               </div>
             </aside>
           ) : showTagManager ? (
-            <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col space-y-3 shadow-lg shadow-slate-200/50 min-h-0 overflow-y-auto scrollable">
-              {/* Tag Window */}
-              <div className="border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 shadow-md mb-4">
-                <div className="flex items-center justify-between px-4 py-3 border-b-2 border-slate-200/60 bg-slate-50/50 rounded-t-xl">
-                  <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase">タグ</h3>
+            <aside className="bg-white/95 backdrop-blur-xl border-2 border-slate-200/60 rounded-3xl p-6 flex flex-col space-y-4 shadow-2xl shadow-slate-300/30 min-h-0 overflow-y-auto scrollable relative overflow-hidden">
+              {/* 装飾的なグラデーション */}
+              <div className="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-amber-400/10 to-orange-400/10 rounded-full blur-2xl -mr-20 -mt-20"></div>
+              
+              <div className="relative z-10">
+                {/* Tag Window - モダンなデザイン */}
+                <div className="border-2 border-slate-200/60 rounded-2xl bg-gradient-to-br from-white/95 to-amber-50/30 shadow-xl shadow-slate-200/30 mb-5">
+                  <div className="flex items-center justify-between px-5 py-4 border-b-2 border-slate-200/60 bg-gradient-to-r from-amber-50/50 to-orange-50/30 rounded-t-2xl">
+                    <h3 className="text-xs font-bold text-slate-700 tracking-wider uppercase flex items-center gap-2">
+                      <div className="w-1 h-4 bg-gradient-to-b from-amber-500 to-orange-500 rounded-full"></div>
+                      タグ
+                    </h3>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={handleCloseTagManager}
@@ -1137,19 +1270,29 @@ const DashboardPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <div className="px-4 py-3">
-                  <p className="text-sm font-semibold text-slate-700">main</p>
+                <div className="px-5 py-4">
+                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-100 to-orange-100 rounded-xl border border-amber-200/50">
+                    <span className="text-sm font-bold text-amber-700">main</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Preview Area */}
-              <div className="flex-1 border-2 border-slate-200/60 rounded-xl bg-gradient-to-br from-white/90 to-slate-50/50 p-4 mb-4 overflow-y-auto scrollable shadow-md min-h-0">
-                <p className="text-xs text-slate-500 mb-3 font-semibold">追加されたファイルのプレビューが出る</p>
+              {/* Preview Area - モダンなデザイン */}
+              <div className="flex-1 border-2 border-slate-200/60 rounded-2xl bg-gradient-to-br from-white/95 to-amber-50/20 p-5 mb-5 overflow-y-auto scrollable shadow-xl shadow-slate-200/30 min-h-0">
+                <p className="text-xs text-slate-600 mb-4 font-bold flex items-center gap-2">
+                  <div className="w-1 h-3 bg-gradient-to-b from-amber-500 to-orange-500 rounded-full"></div>
+                  追加されたファイルのプレビューが出る
+                </p>
                 <div className="min-h-[200px]">
                   {tagPreview ? (
-                    <pre className="text-sm text-slate-700 whitespace-pre-wrap font-mono bg-slate-50/50 p-3 rounded-lg">{tagPreview}</pre>
+                    <pre className="text-sm text-slate-700 whitespace-pre-wrap font-mono bg-white/80 p-4 rounded-xl border border-slate-200/50 shadow-inner">{tagPreview}</pre>
                   ) : (
-                    <p className="text-sm text-slate-400 italic">プレビューがここに表示されます</p>
+                    <div className="flex flex-col items-center justify-center h-full py-12">
+                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center mb-4">
+                        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500"></div>
+                      </div>
+                      <p className="text-sm text-slate-500 font-medium">プレビューがここに表示されます</p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1170,9 +1313,9 @@ const DashboardPage: React.FC = () => {
                 </button>
                 <button 
                   onClick={handleAddNewTag}
-                  className="border-2 border-slate-200 bg-white/80 rounded-xl px-3 py-2.5 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
+                  className="border-2 border-slate-200/80 bg-white/90 rounded-2xl px-4 py-3 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-purple-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
                 >
-                  ＋ タグの追加
+                  <span className="group-hover:text-purple-600 transition-colors duration-300">＋ タグの追加</span>
                 </button>
                 <button 
                   onClick={handleProofreadRange}
@@ -1182,58 +1325,76 @@ const DashboardPage: React.FC = () => {
                   <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
+              </div>
             </aside>
           ) : (
-          <aside className="bg-white/90 backdrop-blur-md border border-slate-200/60 rounded-2xl p-5 flex flex-col space-y-3 shadow-lg shadow-slate-200/50 min-h-0">
-              {/* Generated Text Box */}
-              <div className="border-2 border-slate-200/60 rounded-xl p-4 bg-gradient-to-br from-slate-50/80 to-blue-50/30 mb-2 shadow-sm">
-                <h3 className="text-xs font-bold text-slate-600 mb-2 tracking-wider uppercase">生成テキスト</h3>
-                <div className="min-h-[120px] max-h-[200px] overflow-y-auto scrollable">
+          <aside className="bg-white/95 backdrop-blur-xl border-2 border-slate-200/60 rounded-3xl p-6 flex flex-col space-y-4 shadow-2xl shadow-slate-300/30 min-h-0 relative overflow-hidden">
+              {/* 装飾的なグラデーション */}
+              <div className="absolute top-0 left-0 w-32 h-32 bg-gradient-to-br from-pink-400/10 to-rose-400/10 rounded-full blur-2xl -ml-16 -mt-16"></div>
+              
+              <div className="relative z-10">
+                {/* Generated Text Box - モダンなデザイン */}
+                <div className="border-2 border-slate-200/60 rounded-2xl p-5 bg-gradient-to-br from-indigo-50/50 via-purple-50/30 to-pink-50/30 mb-3 shadow-lg shadow-slate-200/30">
+                  <h3 className="text-xs font-bold text-slate-700 mb-3 tracking-wider uppercase flex items-center gap-2">
+                    <div className="w-1 h-4 bg-gradient-to-b from-pink-500 to-rose-500 rounded-full"></div>
+                    生成テキスト
+                  </h3>
+                <div className="min-h-[140px] max-h-[240px] overflow-y-auto scrollable rounded-xl bg-white/60 p-4 border border-slate-200/50">
                   {isGenerating ? (
-                    <div className="flex items-center justify-center h-full">
-                      <div className="animate-spin rounded-full h-6 w-6 border-2 border-slate-300 border-t-blue-500"></div>
-                      <span className="ml-2 text-sm text-slate-500 font-medium">生成中...</span>
+                    <div className="flex flex-col items-center justify-center h-full gap-3">
+                      <div className="relative">
+                        <div className="animate-spin rounded-full h-10 w-10 border-3 border-slate-200 border-t-indigo-500 border-r-purple-500"></div>
+                        <div className="absolute inset-0 animate-spin rounded-full h-10 w-10 border-3 border-transparent border-b-pink-500" style={{ animationDirection: 'reverse', animationDuration: '1.2s' }} />
+                      </div>
+                      <span className="text-sm text-slate-600 font-semibold">生成中...</span>
                     </div>
                   ) : generatedText ? (
-                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{generatedText}</p>
+                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-medium">{generatedText}</p>
                   ) : (
-                    <p className="text-sm text-slate-400 italic">生成されたテキストがここに表示されることになります</p>
+                    <div className="flex flex-col items-center justify-center h-full text-center py-8">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center mb-3">
+                        <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500"></div>
+                      </div>
+                      <p className="text-sm text-slate-500 font-medium">生成されたテキストがここに表示されます</p>
+                    </div>
                   )}
                 </div>
               </div>
 
-            <button 
-              onClick={handleAddArticle}
-              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
-            >
-              ＋ 文章の追加
-            </button>
-            <button 
-              onClick={handleAddTag}
-              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
-            >
-              ＋ タグの追加
-            </button>
-            <button 
-              onClick={handleAddDictionary}
-              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200"
-            >
-              ＋ 辞書の追加
-            </button>
-            <button 
-              onClick={handleSearchMaterials}
-              className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center"
-            >
-              <Search className="h-4 w-4 mr-2" /> 資料の検索
-            </button>
-            <button 
-              onClick={handleProofreadRange}
-                className="w-full border-2 border-slate-200 bg-white/80 rounded-xl px-4 py-3 text-sm font-semibold text-left text-slate-700 hover:bg-white hover:border-slate-300 hover:shadow-md transition-all duration-200 flex items-center justify-between"
-            >
-              <span>範囲を校正</span>
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </aside>
+              <button 
+                  onClick={handleAddArticle}
+                  className="w-full border-2 border-slate-200/80 bg-white/90 rounded-2xl px-5 py-4 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-indigo-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
+                >
+                  <span className="group-hover:text-indigo-600 transition-colors duration-300">＋ 文章の追加</span>
+                </button>
+                <button 
+                  onClick={handleAddTag}
+                  className="w-full border-2 border-slate-200/80 bg-white/90 rounded-2xl px-5 py-4 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-purple-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
+                >
+                  <span className="group-hover:text-purple-600 transition-colors duration-300">＋ タグの追加</span>
+                </button>
+                <button 
+                  onClick={handleAddDictionary}
+                  className="w-full border-2 border-slate-200/80 bg-white/90 rounded-2xl px-5 py-4 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-pink-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
+                >
+                  <span className="group-hover:text-pink-600 transition-colors duration-300">＋ 辞書の追加</span>
+                </button>
+                <button 
+                  onClick={handleSearchMaterials}
+                  className="w-full border-2 border-slate-200/80 bg-white/90 rounded-2xl px-5 py-4 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-teal-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 flex items-center group"
+                >
+                  <Search className="h-4 w-4 mr-2 group-hover:text-teal-600 transition-colors duration-300" />
+                  <span className="group-hover:text-teal-600 transition-colors duration-300">資料の検索</span>
+                </button>
+                <button 
+                  onClick={handleProofreadRange}
+                  className="w-full border-2 border-slate-200/80 bg-gradient-to-r from-emerald-500/10 to-teal-500/10 rounded-2xl px-5 py-4 text-sm font-bold text-left text-slate-700 hover:from-emerald-500/20 hover:to-teal-500/20 hover:border-emerald-300/50 hover:shadow-xl hover:shadow-emerald-200/50 hover:scale-[1.02] transition-all duration-300 flex items-center justify-between group"
+                >
+                  <span className="group-hover:text-emerald-600 transition-colors duration-300">範囲を校正</span>
+                  <ChevronRight className="h-4 w-4 group-hover:translate-x-1 group-hover:text-emerald-600 transition-all duration-300" />
+                </button>
+              </div>
+            </aside>
           )}
         </div>
       </div>

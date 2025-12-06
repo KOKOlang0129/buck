@@ -8,15 +8,7 @@ marked.setOptions({
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-export const MARKDOWN_TEST_SNIPPET = `# 見出しレベル1
-
-## 見出しレベル2
-
-### 見出しレベル3
-
-#### 見出しレベル4
-
-**太字テキスト** と *斜体テキスト*、そして \`インラインコード\`。
+export const MARKDOWN_TEST_SNIPPET = `**太字テキスト** と *斜体テキスト*、そして \`インラインコード\`。
 
 > ブロック引用: 雨上がりの匂いが、彼女の記憶を呼び起こした。
 
