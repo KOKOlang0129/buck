@@ -7,7 +7,7 @@ import { PromptInputModal } from '@/components/PromptInputModal'
 import { DictionaryInputModal } from '@/components/DictionaryInputModal'
 import { mockDataService, Scenario } from '@/services/mockDataService'
 import { Plus, Settings, LogOut, Search, ChevronRight, X, Minus, Download } from 'lucide-react'
-import { renderMarkdownToHtml, MARKDOWN_TEST_SNIPPET, applyDictionaryHighlights, stripMarkdownToPlainText } from '@/utils/markdown'
+import { renderMarkdownToHtml, MARKDOWN_TEST_SNIPPET, applyDictionaryHighlights } from '@/utils/markdown'
 import { parseOutlineSections, reorderSectionsInMarkdown } from '@/utils/outline'
 import { ProjectTextRelation, AIPolicy, DictionaryEntry } from '@/types'
 import JSZip from 'jszip'
@@ -80,12 +80,14 @@ const DashboardPage: React.FC = () => {
   const [expandedChapters, setExpandedChapters] = React.useState<Set<string>>(new Set())
   const [draggingSectionId, setDraggingSectionId] = React.useState<string | null>(null)
   const [dragOverSectionId, setDragOverSectionId] = React.useState<string | null>(null)
+  const previewTextAreaRef = React.useRef<HTMLTextAreaElement | null>(null)
+  const previewContainerRef = React.useRef<HTMLDivElement | null>(null)
 
-  React.useEffect(() => {
-    if (!user) {
-      navigate('/login')
-    }
-  }, [user, navigate])
+  // React.useEffect(() => {
+  //   if (!user) {
+  //     navigate('/login')
+  //   }
+  // }, [user, navigate])
 
   React.useEffect(() => {
     if (user) {
@@ -180,10 +182,17 @@ const DashboardPage: React.FC = () => {
     }
   }
 
+  const syncPreviewScroll = React.useCallback(() => {
+    if (previewTextAreaRef.current && previewContainerRef.current) {
+      previewContainerRef.current.scrollTop = previewTextAreaRef.current.scrollTop
+      previewContainerRef.current.scrollLeft = previewTextAreaRef.current.scrollLeft
+    }
+  }, [])
+
   const handleSignOut = async () => {
     try {
       await signOut()
-      navigate('/login')
+      navigate('/')
     } catch (error) {
       console.error('Sign out error:', error)
     }
@@ -917,17 +926,32 @@ const DashboardPage: React.FC = () => {
                     </div>
                   ) : viewMode === 'plain' ? (
                     <div className="h-full flex flex-col min-h-0">
-                      <div className="w-full flex-1 text-sm leading-relaxed text-slate-700 font-sans whitespace-pre-wrap overflow-y-auto scrollable border-none outline-none">
-                        {stripMarkdownToPlainText(editorContent) || (
-                          <span className="text-slate-400 italic">ここにプレーンテキストで内容が表示されます...</span>
-                        )}
-                      </div>
+                      <textarea
+                        value={editorContent}
+                        onChange={(e) => handleContentChange(e.target.value)}
+                        className="w-full flex-1 text-sm leading-relaxed text-slate-800 font-sans resize-none border-2 border-slate-200/80 rounded-xl p-4 bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 scrollable whitespace-pre-wrap"
+                        placeholder="ここにプレーンテキストで内容を編集できます..."
+                        aria-label="プレーンモード編集"
+                      />
                     </div>
                   ) : viewMode === 'preview' ? (
-                  <div className="h-full min-h-0 overflow-y-auto scrollable">
+                    <div className="relative h-full min-h-0">
                       <div
-                        className="markdown-preview"
-                        dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
+                        ref={previewContainerRef}
+                        className="absolute inset-0 overflow-y-auto scrollable pointer-events-none border-2 border-slate-200/80 rounded-xl p-4 bg-white/90"
+                      >
+                        <div
+                          className="markdown-preview"
+                          dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
+                        />
+                      </div>
+                      <textarea
+                        ref={previewTextAreaRef}
+                        value={editorContent}
+                        onChange={(e) => handleContentChange(e.target.value)}
+                        onScroll={syncPreviewScroll}
+                        className="absolute inset-0 w-full h-full resize-none bg-transparent border-none outline-none text-transparent caret-indigo-600 selection:bg-blue-200/60 scrollable p-4"
+                        aria-label="プレビューモード編集"
                       />
                     </div>
                   ) : viewMode === 'markdown' ? (
