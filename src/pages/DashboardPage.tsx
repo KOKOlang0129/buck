@@ -80,7 +80,6 @@ const DashboardPage: React.FC = () => {
   const [expandedChapters, setExpandedChapters] = React.useState<Set<string>>(new Set())
   const [draggingSectionId, setDraggingSectionId] = React.useState<string | null>(null)
   const [dragOverSectionId, setDragOverSectionId] = React.useState<string | null>(null)
-  const previewTextAreaRef = React.useRef<HTMLTextAreaElement | null>(null)
   const previewContainerRef = React.useRef<HTMLDivElement | null>(null)
 
   // React.useEffect(() => {
@@ -182,12 +181,6 @@ const DashboardPage: React.FC = () => {
     }
   }
 
-  const syncPreviewScroll = React.useCallback(() => {
-    if (previewTextAreaRef.current && previewContainerRef.current) {
-      previewContainerRef.current.scrollTop = previewTextAreaRef.current.scrollTop
-      previewContainerRef.current.scrollLeft = previewTextAreaRef.current.scrollLeft
-    }
-  }, [])
 
   const handleSignOut = async () => {
     try {
@@ -935,23 +928,49 @@ const DashboardPage: React.FC = () => {
                       />
                     </div>
                   ) : viewMode === 'preview' ? (
-                    <div className="relative h-full min-h-0">
+                    <div className="h-full flex flex-col min-h-0">
                       <div
+                        key={`preview-${selectedScenarioId || 'none'}`}
                         ref={previewContainerRef}
-                        className="absolute inset-0 overflow-y-auto scrollable pointer-events-none border-2 border-slate-200/80 rounded-xl p-4 bg-white/90"
-                      >
-                        <div
-                          className="markdown-preview"
-                          dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
-                        />
-                      </div>
-                      <textarea
-                        ref={previewTextAreaRef}
-                        value={editorContent}
-                        onChange={(e) => handleContentChange(e.target.value)}
-                        onScroll={syncPreviewScroll}
-                        className="absolute inset-0 w-full h-full resize-none bg-transparent border-none outline-none text-transparent caret-indigo-600 selection:bg-blue-200/60 scrollable p-4"
+                        contentEditable
+                        suppressContentEditableWarning
+                        onBlur={(e) => {
+                          const target = e.currentTarget
+                          // HTMLからテキストを抽出し、基本的なmarkdown変換を行う
+                          const extractMarkdown = (el: HTMLElement): string => {
+                            let result = ''
+                            el.childNodes.forEach((node) => {
+                              if (node.nodeType === Node.TEXT_NODE) {
+                                result += node.textContent || ''
+                              } else if (node.nodeType === Node.ELEMENT_NODE) {
+                                const elem = node as HTMLElement
+                                const tag = elem.tagName.toLowerCase()
+                                const inner = extractMarkdown(elem)
+                                if (tag === 'h1') result += `# ${inner}\n\n`
+                                else if (tag === 'h2') result += `## ${inner}\n\n`
+                                else if (tag === 'h3') result += `### ${inner}\n\n`
+                                else if (tag === 'h4') result += `#### ${inner}\n\n`
+                                else if (tag === 'p') result += `${inner}\n\n`
+                                else if (tag === 'li') result += `- ${inner}\n`
+                                else if (tag === 'ul' || tag === 'ol') result += inner
+                                else if (tag === 'blockquote') result += `> ${inner}\n\n`
+                                else if (tag === 'strong' || tag === 'b') result += `**${inner}**`
+                                else if (tag === 'em' || tag === 'i') result += `*${inner}*`
+                                else if (tag === 'code') result += `\`${inner}\``
+                                else if (tag === 'br') result += '\n'
+                                else if (tag === 'div') result += `${inner}\n`
+                                else result += inner
+                              }
+                            })
+                            return result
+                          }
+                          const newContent = extractMarkdown(target).trim()
+                          handleContentChange(newContent)
+                        }}
+                        className="flex-1 border-2 border-slate-200/80 rounded-xl p-4 overflow-y-auto scrollable bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 cursor-text markdown-preview"
+                        style={{ minHeight: '300px' }}
                         aria-label="プレビューモード編集"
+                        dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
                       />
                     </div>
                   ) : viewMode === 'markdown' ? (
