@@ -642,15 +642,16 @@ const DashboardPage: React.FC = () => {
       <div className="h-full w-full flex flex-col px-6 py-6 relative z-10">
         {/* Header - ワイヤーフレームに合わせたデザイン */}
         <div className="mb-6 flex-shrink-0">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex items-center gap-4 flex-1">
-              <div className="flex-1 max-w-md">
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+            {/* 左：プロジェクト名 + 新規作成ボタン */}
+            <div className="flex flex-row items-end gap-8 basis-full sm:basis-[60%]">
+              <div className="flex-1 max-w-[300px]">
                 <input
                   type="text"
                   value={projectName}
                   onChange={(e) => handleProjectNameChange(e.target.value)}
                   placeholder="プロジェクトの名前"
-                  className="w-full px-5 py-3 bg-white/95 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-base text-slate-800 placeholder-slate-400 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300/50 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-300"
+                  className="w-full px-5 py-2.5 bg-white/95 backdrop-blur-md border-2 border-slate-200/80 rounded-lg text-base text-slate-800 placeholder-slate-400 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300/50 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-300"
                 />
               </div>
               <div className="flex items-end">
@@ -664,7 +665,8 @@ const DashboardPage: React.FC = () => {
                 </Button>
               </div>
             </div>
-            <div className="flex flex-col items-end gap-3">
+            {/* 右：ログアウト + 設定 + エクスポート */}
+            <div className="flex flex-col items-end gap-3 basis-full sm:basis-[40%]">
               <Button 
                 variant="outline" 
                 className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-red-300 hover:scale-105 transition-all duration-300 group" 
@@ -673,7 +675,7 @@ const DashboardPage: React.FC = () => {
                 <LogOut className="h-4 w-4 mr-2 group-hover:translate-x-1 transition-transform duration-300" />
                 ログアウト
               </Button>
-              <div className="flex items-center gap-3">
+              <div className="flex w-full items-center justify-end gap-[70px]">
                 <Button 
                   variant="outline" 
                   className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300 hover:scale-105 transition-all duration-300 group" 
@@ -684,7 +686,7 @@ const DashboardPage: React.FC = () => {
                 </Button>
                 <Button 
                   variant="outline" 
-                  className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white border-0 rounded-2xl text-sm font-semibold shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 hover:scale-105 transition-all duration-300" 
+                  className="min-w-[370px] px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white border-0 rounded-2xl text-sm font-semibold shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 hover:scale-105 transition-all duration-300" 
                   onClick={handleExportProject}
                 >
                   <Download className="h-4 w-4 mr-2" />

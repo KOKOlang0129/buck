@@ -1,0 +1,63 @@
+{
+  "name": "pxr_mvp_phase1",
+  "version": "1.0.0",
+  "description": "PXr LLC MVP Phase 1 Full Development Rules",
+  "goals": [
+    "クライアント要求に完全一致するWebアプリを構築すること",
+    "要件定義書_第一段階.md・API設計書・環境構築ガイドなどを完全に参照し、実装ミスを防ぐこと",
+    "ビジネス日本語文書もネイティブ品質で出力できること",
+    "Cursor上でコードレビューとドキュメント修正を自動化すること"
+  ],
+  "context": {
+    "reference_docs": [
+      "要件定義書_第一段階.md",
+      "api_design_doc.md",
+      "環境構築手順書.md",
+      "APIキー管理・認証設計書.md",
+      "クライアントメッセージ対応集.md"
+    ],
+    "environment": {
+      "frontend": "Next.js + TypeScript + TailwindCSS",
+      "backend": "Node.js + Express + Prisma + PostgreSQL",
+      "infra": "AWS (EC2, S3, RDS, Lambda), Vercel (Front Hosting)",
+      "auth": "JWT + API Key Validation + Whitelist Control"
+    },
+    "repository": {
+      "branching": "main / dev / feature/*",
+      "commit_style": "Conventional Commits",
+      "code_review": true
+    }
+  },
+  "quality_rules": {
+    "code": [
+      "全てのエンドポイントは要件定義書に準拠していること",
+      "セキュリティ設計(APIキー, JWT, CORS)を厳格に実装",
+      "テストコード(Jest)必須",
+      "ログとエラーハンドリングは明示的に",
+      "パフォーマンス(応答時間 < 300ms)"
+    ],
+    "documentation": [
+      "全コードにDocstringを追加",
+      "日本語READMEと英語READMEを併記",
+      "アーキテクチャ概要図をdocs/architecture.mdに更新"
+    ],
+    "communication": [
+      "クライアントへの報告文はビジネス日本語の敬語・簡潔・前向き表現で生成",
+      "作業完了後はGitHubリンクと進捗を提示",
+      "指摘や懸念点は丁寧に提案ベースで述べる"
+    ]
+  },
+  "commands": {
+    "/generate_api": "バックエンドにAPIエンドポイントを自動生成（APIキー検証含む）",
+    "/document_architecture": "最新コードからMVPフェーズ構成図を生成",
+    "/translate_doc_jp": "技術文書を自然なビジネス日本語に翻訳",
+    "/add_whitelist_login": "Phase 1仕様に基づくホワイトリスト認証を追加",
+    "/commit_review": "GitHubの最新コミットを品質・セキュリティ・整合性観点から評価",
+    "/reply_client": "クライアント文面に対する最適な日本語返信を作成"
+  },
+  "output_preferences": {
+    "style": "structured, concise, professional",
+    "language": "Japanese",
+    "tone": "polite, confident, clear"
+  }
+}
