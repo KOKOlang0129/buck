@@ -6,7 +6,7 @@ import { SettingsModal, SettingsData } from '@/components/SettingsModal'
 import { PromptInputModal } from '@/components/PromptInputModal'
 import { DictionaryInputModal } from '@/components/DictionaryInputModal'
 import { mockDataService, Scenario } from '@/services/mockDataService'
-import { Plus, Settings, LogOut, Search, ChevronRight, X, Minus, Download } from 'lucide-react'
+import { Plus, Settings, LogOut, ChevronRight, X, Minus, Download } from 'lucide-react'
 import { renderMarkdownToHtml, MARKDOWN_TEST_SNIPPET, applyDictionaryHighlights } from '@/utils/markdown'
 import { parseOutlineSections, reorderSectionsInMarkdown } from '@/utils/outline'
 import { ProjectTextRelation, AIPolicy, DictionaryEntry } from '@/types'
@@ -81,6 +81,7 @@ const DashboardPage: React.FC = () => {
   const [draggingSectionId, setDraggingSectionId] = React.useState<string | null>(null)
   const [dragOverSectionId, setDragOverSectionId] = React.useState<string | null>(null)
   const previewContainerRef = React.useRef<HTMLDivElement | null>(null)
+  const [isProjectListCollapsed, setIsProjectListCollapsed] = React.useState(false)
 
   // React.useEffect(() => {
   //   if (!user) {
@@ -103,7 +104,7 @@ const DashboardPage: React.FC = () => {
   const selectedScenario = scenarios.find((scenario) => scenario.id === selectedScenarioId) || null
 
   React.useEffect(() => {
-    if (selectedScenario) {
+    if (selectedScenarioId && selectedScenario) {
       // 既存のコンテンツをチェックして、章が4つ未満の場合は追加
       let currentContent = selectedScenario.content || ''
       
@@ -141,14 +142,15 @@ const DashboardPage: React.FC = () => {
       }
       
       setEditorContent(contentToSet)
-      setProjectName(selectedScenario.title)
+      // Ensure project name is always synced with selected scenario title
+      setProjectName(selectedScenario.title || '')
       setDictionaryItems(selectedScenario.dictionaryEntries ?? [])
     } else {
       setEditorContent('')
       setProjectName('')
       setDictionaryItems([])
     }
-  }, [selectedScenario, user])
+  }, [selectedScenarioId, selectedScenario, user])
 
   React.useEffect(() => {
     if (viewMode === 'preview' && previewLayout !== 'preview') {
@@ -157,6 +159,12 @@ const DashboardPage: React.FC = () => {
       setPreviewLayout(lastMarkdownLayoutRef.current)
     }
   }, [viewMode, previewLayout])
+
+  // 生成テキスト関連の状態は、モーダル連携など将来のUI拡張で使用予定のため保持する
+  // TypeScriptの未使用警告を抑制する目的で依存配列として参照しておく
+  React.useEffect(() => {
+    // no-op
+  }, [generatedText, isGenerating])
 
   const handleProjectNameChange = (newName: string) => {
     setProjectName(newName)
@@ -421,6 +429,11 @@ const DashboardPage: React.FC = () => {
     setPreviewLayout(layout)
   }
 
+  // Plainモード用の表示・保存変換
+  const toPlainText = (content: string) => content.replace(/^##\s*/gm, '')
+  const fromPlainText = (plain: string) =>
+    plain.replace(/^([ \t]*)(第.+章.*)$/gm, '$1## $2')
+
   const handleInjectMarkdownSample = () => {
     handleContentChange(MARKDOWN_TEST_SNIPPET)
     setViewMode('markdown')
@@ -627,38 +640,31 @@ const DashboardPage: React.FC = () => {
       </div>
       
       <div className="h-full w-full flex flex-col px-6 py-6 relative z-10">
-        {/* Header - モダンなデザイン */}
+        {/* Header - ワイヤーフレームに合わせたデザイン */}
         <div className="mb-6 flex-shrink-0">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div className="flex-1 max-w-md">
-              <label className="block text-xs font-bold text-slate-700 mb-2 tracking-wider uppercase">
-                プロジェクトの名前
-              </label>
-              <input
-                type="text"
-                value={projectName}
-                onChange={(e) => handleProjectNameChange(e.target.value)}
-                placeholder="プロジェクト名を入力"
-                className="w-full px-5 py-3 bg-white/95 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-base text-slate-800 placeholder-slate-400 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300/50 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-300"
-              />
+            <div className="flex items-center gap-4 flex-1">
+              <div className="flex-1 max-w-md">
+                <input
+                  type="text"
+                  value={projectName}
+                  onChange={(e) => handleProjectNameChange(e.target.value)}
+                  placeholder="プロジェクトの名前"
+                  className="w-full px-5 py-3 bg-white/95 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-base text-slate-800 placeholder-slate-400 shadow-lg shadow-slate-200/50 hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300/50 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all duration-300"
+                />
+              </div>
+              <div className="flex items-end">
+                <Button 
+                  variant="outline" 
+                  onClick={handleCreateScenario}
+                  className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300 hover:scale-105 transition-all duration-300 group" 
+                >
+                  <Plus className="h-4 w-4 mr-2 group-hover:rotate-90 transition-transform duration-300" />
+                  プロジェクトを新規作成
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              <Button 
-                variant="outline" 
-                className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300 hover:scale-105 transition-all duration-300 group" 
-                onClick={() => setIsSettingsOpen(true)}
-              >
-                <Settings className="h-4 w-4 mr-2 group-hover:rotate-90 transition-transform duration-300" />
-                設定
-              </Button>
-              <Button 
-                variant="outline" 
-                className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white border-0 rounded-2xl text-sm font-semibold shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 hover:scale-105 transition-all duration-300" 
-                onClick={handleExportProject}
-              >
-                <Download className="h-4 w-4 mr-2" />
-                エクスポート
-              </Button>
+            <div className="flex flex-col items-end gap-3">
               <Button 
                 variant="outline" 
                 className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-red-300 hover:scale-105 transition-all duration-300 group" 
@@ -667,53 +673,96 @@ const DashboardPage: React.FC = () => {
                 <LogOut className="h-4 w-4 mr-2 group-hover:translate-x-1 transition-transform duration-300" />
                 ログアウト
               </Button>
+              <div className="flex items-center gap-3">
+                <Button 
+                  variant="outline" 
+                  className="px-5 py-3 bg-white/90 backdrop-blur-md border-2 border-slate-200/80 rounded-2xl text-sm font-semibold text-slate-700 shadow-lg shadow-slate-200/50 hover:bg-white hover:shadow-xl hover:shadow-slate-300/50 hover:border-indigo-300 hover:scale-105 transition-all duration-300 group" 
+                  onClick={() => setIsSettingsOpen(true)}
+                >
+                  <Settings className="h-4 w-4 mr-2 group-hover:rotate-90 transition-transform duration-300" />
+                  設定
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white border-0 rounded-2xl text-sm font-semibold shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 hover:scale-105 transition-all duration-300" 
+                  onClick={handleExportProject}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  ↓ エクスポート
+                </Button>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 gap-6 xl:grid-cols-[clamp(260px,20vw,300px)_minmax(0,1fr)_clamp(280px,22vw,400px)] min-h-0">
+        <div className={`flex-1 grid grid-cols-1 gap-6 transition-all duration-300 ${
+          isProjectListCollapsed
+            ? 'xl:grid-cols-[clamp(44px,6vw,56px)_minmax(0,1fr)_clamp(280px,22vw,400px)]'
+            : 'xl:grid-cols-[clamp(260px,20vw,300px)_minmax(0,1fr)_clamp(280px,22vw,400px)]'
+        } min-h-0`}>
           {/* Project List - モダンなカードデザイン */}
-          <aside className="bg-white/95 backdrop-blur-xl border-2 border-slate-200/60 rounded-3xl p-6 flex flex-col shadow-2xl shadow-slate-300/30 min-h-0 relative overflow-hidden">
+          <aside className={`bg-white/95 backdrop-blur-xl border-2 border-slate-200/60 rounded-3xl p-3 xl:p-6 flex flex-col shadow-2xl shadow-slate-300/30 min-h-0 relative overflow-hidden transition-all duration-300`}>
             {/* 装飾的なグラデーション */}
             <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-400/10 to-purple-400/10 rounded-full blur-2xl -mr-16 -mt-16"></div>
             
-            <div className="relative z-10">
-              <h2 className="text-sm font-bold text-slate-700 mb-5 tracking-wider uppercase flex items-center gap-2">
-                <div className="w-1 h-5 bg-gradient-to-b from-indigo-500 to-purple-500 rounded-full"></div>
-                プロジェクト一覧
-              </h2>
-              <div className="space-y-3 flex-1 overflow-y-auto scrollable pr-2 min-h-0">
-                {scenarios.length === 0 ? (
-                  <div className="py-12 text-center">
-                    <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center">
-                      <Plus className="h-8 w-8 text-slate-400" />
-                    </div>
-                    <p className="text-sm text-slate-500 font-medium">まだプロジェクトがありません</p>
-                  </div>
-                ) : (
-                  scenarios.map((scenario) => (
-                    <button
-                      key={scenario.id}
-                      onClick={() => setSelectedScenarioId(scenario.id)}
-                      className={`w-full text-left px-5 py-4 rounded-2xl border-2 transition-all duration-300 transform ${
-                        selectedScenarioId === scenario.id
-                          ? 'border-indigo-500 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white shadow-xl shadow-indigo-500/40 scale-[1.02]'
-                          : 'border-slate-200/80 bg-white/80 hover:bg-white hover:border-indigo-300/50 hover:shadow-lg hover:shadow-slate-200/50 hover:scale-[1.01] text-slate-700'
-                      }`}
-                    >
-                      <p className="text-sm font-bold truncate">{scenario.title}</p>
-                    </button>
-                  ))
+            <div className="relative z-10 flex flex-col flex-1 min-h-0">
+              {/* 左カラムの開閉トグル */}
+              <div className="flex items-center justify-between mb-4 flex-shrink-0">
+                {!isProjectListCollapsed && (
+                  <h2 className="text-sm font-bold text-slate-700 tracking-wider uppercase flex items-center gap-2">
+                    <div className="w-1 h-5 bg-gradient-to-b from-indigo-500 to-purple-500 rounded-full"></div>
+                    テキスト一覧
+                  </h2>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setIsProjectListCollapsed((prev) => !prev)}
+                  className="ml-auto inline-flex items-center justify-center w-8 h-8 rounded-full border border-slate-200 bg-white/90 text-slate-500 hover:text-indigo-600 hover:border-indigo-300 shadow-sm hover:shadow-md transition-all duration-300"
+                  aria-label={isProjectListCollapsed ? 'テキスト一覧を展開' : 'テキスト一覧を折りたたむ'}
+                >
+                  <span className={`text-lg leading-none transform transition-transform duration-300 ${isProjectListCollapsed ? '-rotate-180' : ''}`}>
+                    ‹
+                  </span>
+                </button>
               </div>
-              <Button
-                variant="outline"
-                onClick={handleCreateScenario}
-                className="mt-5 w-full justify-center py-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white border-0 rounded-2xl font-bold shadow-xl shadow-indigo-500/40 hover:shadow-2xl hover:shadow-indigo-500/50 hover:scale-105 transition-all duration-300 group"
-              >
-                <Plus className="h-5 w-5 mr-2 group-hover:rotate-90 transition-transform duration-300" />
-                新規作成
-              </Button>
+
+              {/* 折りたたみ時はリスト部分を非表示にしてトグルだけ残す */}
+              {!isProjectListCollapsed && (
+                <>
+                  <div className="space-y-3 flex-1 overflow-y-auto scrollable pr-2 min-h-0">
+                    {scenarios.length === 0 ? (
+                      <div className="py-12 text-center">
+                        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center">
+                          <Plus className="h-8 w-8 text-slate-400" />
+                        </div>
+                        <p className="text-sm text-slate-500 font-medium">まだプロジェクトがありません</p>
+                      </div>
+                    ) : (
+                      scenarios.map((scenario) => (
+                        <button
+                          key={scenario.id}
+                          onClick={() => setSelectedScenarioId(scenario.id)}
+                          className={`w-full text-left px-5 py-4 rounded-2xl border-2 transition-all duration-300 transform ${
+                            selectedScenarioId === scenario.id
+                              ? 'border-indigo-500 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white shadow-xl shadow-indigo-500/40 scale-[1.02]'
+                              : 'border-slate-200/80 bg-white/80 hover:bg-white hover:border-indigo-300/50 hover:shadow-lg hover:shadow-slate-200/50 hover:scale-[1.01] text-slate-700'
+                          }`}
+                        >
+                          <p className="text-sm font-bold truncate">{scenario.title}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={handleCreateScenario}
+                    className="mt-5 w-full justify-center py-4 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white border-0 rounded-2xl font-bold shadow-xl shadow-indigo-500/40 hover:shadow-2xl hover:shadow-indigo-500/50 hover:scale-105 transition-all duration-300 group flex-shrink-0"
+                  >
+                    <Plus className="h-5 w-5 mr-2 group-hover:rotate-90 transition-transform duration-300" />
+                    新規作成
+                  </Button>
+                </>
+              )}
             </div>
           </aside>
 
@@ -920,8 +969,12 @@ const DashboardPage: React.FC = () => {
                   ) : viewMode === 'plain' ? (
                     <div className="h-full flex flex-col min-h-0">
                       <textarea
-                        value={editorContent}
-                        onChange={(e) => handleContentChange(e.target.value)}
+                        value={toPlainText(editorContent)}
+                        onChange={(e) => {
+                          const plain = e.target.value
+                          const markdown = fromPlainText(plain)
+                          handleContentChange(markdown)
+                        }}
                         className="w-full flex-1 text-sm leading-relaxed text-slate-800 font-sans resize-none border-2 border-slate-200/80 rounded-xl p-4 bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 scrollable whitespace-pre-wrap"
                         placeholder="ここにプレーンテキストで内容を編集できます..."
                         aria-label="プレーンモード編集"
@@ -1375,35 +1428,7 @@ const DashboardPage: React.FC = () => {
               {/* 装飾的なグラデーション */}
               <div className="absolute top-0 left-0 w-32 h-32 bg-gradient-to-br from-pink-400/10 to-rose-400/10 rounded-full blur-2xl -ml-16 -mt-16"></div>
               
-              <div className="relative z-10">
-                {/* Generated Text Box - モダンなデザイン */}
-                <div className="border-2 border-slate-200/60 rounded-2xl p-5 bg-gradient-to-br from-indigo-50/50 via-purple-50/30 to-pink-50/30 mb-3 shadow-lg shadow-slate-200/30">
-                  <h3 className="text-xs font-bold text-slate-700 mb-3 tracking-wider uppercase flex items-center gap-2">
-                    <div className="w-1 h-4 bg-gradient-to-b from-pink-500 to-rose-500 rounded-full"></div>
-                    生成テキスト
-                  </h3>
-                <div className="min-h-[140px] max-h-[240px] overflow-y-auto scrollable rounded-xl bg-white/60 p-4 border border-slate-200/50">
-                  {isGenerating ? (
-                    <div className="flex flex-col items-center justify-center h-full gap-3">
-                      <div className="relative">
-                        <div className="animate-spin rounded-full h-10 w-10 border-3 border-slate-200 border-t-indigo-500 border-r-purple-500"></div>
-                        <div className="absolute inset-0 animate-spin rounded-full h-10 w-10 border-3 border-transparent border-b-pink-500" style={{ animationDirection: 'reverse', animationDuration: '1.2s' }} />
-                      </div>
-                      <span className="text-sm text-slate-600 font-semibold">生成中...</span>
-                    </div>
-                  ) : generatedText ? (
-                    <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed font-medium">{generatedText}</p>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center mb-3">
-                        <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500"></div>
-                      </div>
-                      <p className="text-sm text-slate-500 font-medium">生成されたテキストがここに表示されます</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
+              <div className="relative z-10 flex flex-col space-y-4">
               <button 
                   onClick={handleAddArticle}
                   className="w-full border-2 border-slate-200/80 bg-white/90 rounded-2xl px-5 py-4 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-indigo-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 group"
@@ -1426,7 +1451,7 @@ const DashboardPage: React.FC = () => {
                   onClick={handleSearchMaterials}
                   className="w-full border-2 border-slate-200/80 bg-white/90 rounded-2xl px-5 py-4 text-sm font-bold text-left text-slate-700 hover:bg-white hover:border-teal-300/50 hover:shadow-xl hover:shadow-slate-200/50 hover:scale-[1.02] transition-all duration-300 flex items-center group"
                 >
-                  <Search className="h-4 w-4 mr-2 group-hover:text-teal-600 transition-colors duration-300" />
+                  <Plus className="h-4 w-4 mr-2 group-hover:text-teal-600 transition-colors duration-300" />
                   <span className="group-hover:text-teal-600 transition-colors duration-300">資料の検索</span>
                 </button>
                 <button 
