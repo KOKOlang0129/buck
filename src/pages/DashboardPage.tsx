@@ -430,9 +430,70 @@ const DashboardPage: React.FC = () => {
   }
 
   // Plainモード用の表示・保存変換
-  const toPlainText = (content: string) => content.replace(/^##\s*/gm, '')
-  const fromPlainText = (plain: string) =>
-    plain.replace(/^([ \t]*)(第.+章.*)$/gm, '$1## $2')
+  // すべての見出し記号（#、##、###、####、#####、######）を削除
+  const toPlainText = (content: string) => {
+    if (!content) return ''
+    // 行頭の#記号（1〜6個）とその後の空白を削除
+    return content.replace(/^#{1,6}\s+/gm, '')
+  }
+  
+  // PlainテキストからMarkdownに戻す際の変換
+  // 見出し行を検出して適切なレベルの#記号を追加
+  const fromPlainText = (plain: string) => {
+    if (!plain) return ''
+    
+    // 元のMarkdownコンテンツから見出し構造を取得
+    const originalSections = parseOutlineSections(editorContent)
+    
+    // Plainテキストを行ごとに処理
+    const lines = plain.split('\n')
+    const result: string[] = []
+    
+    // 見出し候補のパターン（「第X章」「Chapter X」など）
+    const headingPatterns = [
+      /^第[一二三四五六七八九十百千万\d]+章/,
+      /^Chapter\s+\d+/i,
+      /^第\d+章/,
+      /^第\d+節/,
+      /^第\d+部/,
+      /^第[一二三四五六七八九十百千万\d]+節/,
+      /^第[一二三四五六七八九十百千万\d]+部/,
+    ]
+    
+    let sectionIndex = 0
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const trimmed = line.trim()
+      
+      // 空行の場合はそのまま追加
+      if (!trimmed) {
+        result.push(line)
+        continue
+      }
+      
+      // 見出し行かどうかを判定
+      const isHeading = headingPatterns.some(pattern => pattern.test(trimmed))
+      
+      if (isHeading && sectionIndex < originalSections.length) {
+        // 元の見出しレベルを使用
+        const level = originalSections[sectionIndex].level
+        const prefix = '#'.repeat(Math.min(Math.max(level, 1), 6))
+        result.push(`${prefix} ${trimmed}`)
+        sectionIndex++
+      } else {
+        result.push(line)
+      }
+    }
+    
+    return result.join('\n')
+  }
+  
+  // Plain Modeで#記号を入力された場合に削除する関数
+  const removeHashSymbols = (text: string): string => {
+    // 行頭の#記号（1〜6個）とその後の空白を削除
+    return text.replace(/^#{1,6}\s+/gm, '')
+  }
 
   const handleInjectMarkdownSample = () => {
     handleContentChange(MARKDOWN_TEST_SNIPPET)
@@ -900,7 +961,7 @@ const DashboardPage: React.FC = () => {
                   )}
                 </div>
               </div>
-              <div className="border-2 border-slate-200/60 rounded-2xl p-6 overflow-y-auto scrollable bg-white/90 backdrop-blur-sm min-h-0 shadow-lg shadow-slate-200/30">
+              <div className="border-2 border-slate-200/60 rounded-2xl p-6 overflow-y-auto scrollable bg-white/90 backdrop-blur-sm shadow-lg shadow-slate-200/30" style={{ height: 'calc(100vh - 280px)', minHeight: '400px' }}>
                 {selectedScenario ? (
                   viewMode === null ? (
                     <div className="relative h-full min-h-[400px] flex items-center justify-center bg-white">
@@ -910,7 +971,7 @@ const DashboardPage: React.FC = () => {
                       </span>
                     </div>
                   ) : viewMode === 'outline' ? (
-                    <div className="h-full min-h-[400px] flex flex-col">
+                    <div className="h-full flex flex-col" style={{ height: '100%' }}>
                       {outlineSections.length > 0 ? (
                         <div className="flex-1 space-y-4">
                           {outlineSections.map((item, index) => {
@@ -969,21 +1030,23 @@ const DashboardPage: React.FC = () => {
                       )}
                     </div>
                   ) : viewMode === 'plain' ? (
-                    <div className="h-full flex flex-col min-h-0">
+                    <div className="h-full flex flex-col" style={{ height: '100%' }}>
                       <textarea
                         value={toPlainText(editorContent)}
                         onChange={(e) => {
-                          const plain = e.target.value
-                          const markdown = fromPlainText(plain)
+                          // #記号を削除したプレーンテキストを取得
+                          const plainWithoutHash = removeHashSymbols(e.target.value)
+                          // PlainテキストからMarkdownに変換
+                          const markdown = fromPlainText(plainWithoutHash)
                           handleContentChange(markdown)
                         }}
-                        className="w-full flex-1 text-sm leading-relaxed text-slate-800 font-sans resize-none border-2 border-slate-200/80 rounded-xl p-4 bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 scrollable whitespace-pre-wrap"
+                        className="w-full h-full text-sm leading-relaxed text-slate-800 font-sans resize-none border-2 border-slate-200/80 rounded-xl p-4 bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 scrollable whitespace-pre-wrap"
                         placeholder="ここにプレーンテキストで内容を編集できます..."
                         aria-label="プレーンモード編集"
                       />
                     </div>
                   ) : viewMode === 'preview' ? (
-                    <div className="h-full flex flex-col min-h-0">
+                    <div className="h-full flex flex-col" style={{ height: '100%' }}>
                       <div
                         key={`preview-${selectedScenarioId || 'none'}`}
                         ref={previewContainerRef}
@@ -1022,23 +1085,22 @@ const DashboardPage: React.FC = () => {
                           const newContent = extractMarkdown(target).trim()
                           handleContentChange(newContent)
                         }}
-                        className="flex-1 border-2 border-slate-200/80 rounded-xl p-4 overflow-y-auto scrollable bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 cursor-text markdown-preview"
-                        style={{ minHeight: '300px' }}
+                        className="h-full border-2 border-slate-200/80 rounded-xl p-4 overflow-y-auto scrollable bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 cursor-text markdown-preview"
                         aria-label="プレビューモード編集"
                         dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
                       />
                     </div>
                   ) : viewMode === 'markdown' ? (
-                    <div className="h-full flex flex-col min-h-0">
+                    <div className="h-full flex flex-col" style={{ height: '100%' }}>
                       {previewLayout === 'split' ? (
-                        <div className="grid md:grid-cols-2 gap-4 flex-1 min-h-0">
+                        <div className="grid md:grid-cols-2 gap-4 h-full">
                           <textarea
                             value={editorContent}
                             onChange={(e) => handleContentChange(e.target.value)}
                             className="w-full h-full text-sm leading-relaxed text-slate-700 font-mono resize-none border-2 border-slate-200 rounded-xl p-4 bg-white/90 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 transition-all duration-200 scrollable"
                             placeholder="ここにMarkdown形式で内容を入力してください..."
                           />
-                          <div className="border-2 border-slate-200 rounded-xl p-4 overflow-y-auto scrollable bg-white/90">
+                          <div className="border-2 border-slate-200 rounded-xl p-4 overflow-y-auto scrollable bg-white/90 h-full">
                             <div
                               className="markdown-preview"
                               dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
@@ -1046,7 +1108,7 @@ const DashboardPage: React.FC = () => {
                           </div>
                         </div>
                       ) : previewLayout === 'preview' ? (
-                        <div className="flex-1 border-2 border-slate-200 rounded-xl p-4 overflow-y-auto scrollable bg-white/90 min-h-0">
+                        <div className="h-full border-2 border-slate-200 rounded-xl p-4 overflow-y-auto scrollable bg-white/90">
                           <div
                             className="markdown-preview"
                             dangerouslySetInnerHTML={{ __html: dictionaryHighlightedMarkdown }}
@@ -1056,7 +1118,7 @@ const DashboardPage: React.FC = () => {
                         <textarea
                           value={editorContent}
                           onChange={(e) => handleContentChange(e.target.value)}
-                          className="w-full flex-1 text-sm leading-relaxed text-slate-700 font-mono resize-none border-none outline-none bg-transparent scrollable"
+                          className="w-full h-full text-sm leading-relaxed text-slate-700 font-mono resize-none border-none outline-none bg-transparent scrollable"
                           placeholder="ここにMarkdown形式で内容を入力してください..."
                         />
                       )}
