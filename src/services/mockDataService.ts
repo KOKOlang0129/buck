@@ -161,6 +161,46 @@ class MockDataService {
   private projectDictionaries: Map<string, DictionaryEntry[]> = new Map()
   private scenarios: Scenario[] = []
 
+  /**
+   * タグの正規化処理
+   * - 重複を排除
+   * - 空文字列や空白のみのタグを除去
+   * - 前後の空白を削除
+   */
+  private normalizeTags(tags: string[]): string[] {
+    if (!tags || tags.length === 0) return []
+    
+    // 前後の空白を削除し、空文字列を除去
+    const trimmed = tags
+      .map(tag => tag.trim())
+      .filter(tag => tag.length > 0)
+    
+    // 重複を排除（大文字小文字を区別）
+    return Array.from(new Set(trimmed))
+  }
+
+  /**
+   * プロジェクトのタグを正規化し、重複を統合する
+   */
+  private normalizeProjectTags(project: ProjectTextRelation): void {
+    // プロジェクトレベルのタグを正規化
+    project.tags = this.normalizeTags(project.tags || [])
+    
+    // テキストレベルのタグを削除（プロジェクトレベルに統一）
+    project.texts.forEach(text => {
+      text.tags = []
+    })
+  }
+
+  /**
+   * すべてのプロジェクトのタグを正規化する（初期ロード時などに使用）
+   */
+  private normalizeAllProjectTags(): void {
+    this.projects.forEach(project => {
+      this.normalizeProjectTags(project)
+    })
+  }
+
   // ProjectTextRelationをScenarioに変換（後方互換性のため）
   private projectToScenario(project: ProjectTextRelation, authorId: string): Scenario {
     const mainTextId = project.texts[0]?.id || 't-main'
@@ -173,7 +213,7 @@ class MockDataService {
       content: mainText,
       createdAt: new Date(),
       updatedAt: new Date(),
-      tags: project.tags || [],
+      tags: this.normalizeTags(project.tags || []),
       isPublic: true,
       authorId,
       dictionaryEntries: dictionary
@@ -244,7 +284,7 @@ class MockDataService {
           tags: []
         }
       ],
-      tags: scenario.tags || [],
+      tags: this.normalizeTags(scenario.tags || []),
       tag_docs: {},
       libraly: scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0 ? ['辞書'] : undefined,
       lib_docs: scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0 ? {
@@ -274,10 +314,13 @@ class MockDataService {
       project.main = `${updates.title}.md`
     }
     
-    // タグの更新
+    // タグの更新（正規化処理を適用）
     if (updates.tags) {
-      project.tags = updates.tags
+      project.tags = this.normalizeTags(updates.tags)
     }
+    
+    // プロジェクトのタグを正規化（テキストレベルのタグを削除）
+    this.normalizeProjectTags(project)
     
     // コンテンツの更新
     if (updates.content !== undefined) {
@@ -378,6 +421,8 @@ class MockDataService {
     if (savedProjects) {
       try {
         this.projects = JSON.parse(savedProjects)
+        // 読み込み後にタグを正規化
+        this.normalizeAllProjectTags()
       } catch (error) {
         console.error('Error loading projects from localStorage:', error)
       }
@@ -447,6 +492,10 @@ class MockDataService {
     
     // localStorageからデータを読み込む（既存データがあれば上書き）
     this.loadFromLocalStorage()
+    
+    // 初期ロード時にすべてのプロジェクトのタグを正規化（重複タグを統合）
+    this.normalizeAllProjectTags()
+    this.saveToLocalStorage()
   }
 }
 

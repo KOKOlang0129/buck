@@ -264,7 +264,7 @@ const DashboardPage: React.FC = () => {
             tags: [] // テキストにはタグを紐付けない（プロジェクトレベルにのみ存在）
           }
         ],
-        tags: Array.from(new Set(scenario.tags || [])),
+        tags: Array.from(new Set((scenario.tags || []).filter(tag => tag && tag.trim().length > 0).map(tag => tag.trim()))),
         tag_docs: {},
         libraly: scenario.dictionaryEntries && scenario.dictionaryEntries.length > 0 ? ['辞書'] : undefined,
         lib_docs:
@@ -368,10 +368,11 @@ const DashboardPage: React.FC = () => {
         zip.file('dictionary.json', JSON.stringify(dictionary, null, 2))
       }
       
-      // 4. tags.json - タグデータ（プロジェクトレベル）
-      if (project.tags && project.tags.length > 0) {
+      // 4. tags.json - タグデータ（プロジェクトレベル、重複排除済み）
+      const uniqueTags = Array.from(new Set((project.tags || []).filter(tag => tag && tag.trim().length > 0).map(tag => tag.trim())))
+      if (uniqueTags.length > 0) {
         zip.file('tags.json', JSON.stringify({
-          tags: project.tags,
+          tags: uniqueTags,
           tag_docs: project.tag_docs || {}
         }, null, 2))
       }
@@ -536,7 +537,8 @@ const DashboardPage: React.FC = () => {
     setShowTagManager(true)
     // タグファイルのプレビューを生成（tag.mdは自動生成）
     if (selectedScenario) {
-      const tags = selectedScenario.tags || []
+      // 重複を排除して表示（念のため）
+      const tags = Array.from(new Set(selectedScenario.tags || []))
       const tagContent = tags.length > 0 
         ? tags.map(tag => `# ${tag}`).join('\n\n')
         : '# main'
@@ -553,15 +555,33 @@ const DashboardPage: React.FC = () => {
   const handleAddNewTag = () => {
     const tag = prompt('タグ名を入力してください:')
     if (tag && selectedScenario) {
+      const trimmedTag = tag.trim()
+      if (!trimmedTag) {
+        alert('タグ名を入力してください。')
+        return
+      }
+      
       const currentTags = selectedScenario.tags || []
-      if (!currentTags.includes(tag)) {
-        mockDataService.updateScenario(selectedScenario.id, {
-          tags: [...currentTags, tag]
-        })
-        loadScenarios()
-        // プレビューを更新
-        const updatedTags = [...currentTags, tag]
-        const tagContent = updatedTags.map(t => `# ${t}`).join('\n\n')
+      
+      // 重複チェック（大文字小文字を区別）
+      if (currentTags.includes(trimmedTag)) {
+        alert(`タグ「${trimmedTag}」は既に存在します。`)
+        return
+      }
+      
+      // タグを追加（updateScenario内で正規化される）
+      mockDataService.updateScenario(selectedScenario.id, {
+        tags: [...currentTags, trimmedTag]
+      })
+      loadScenarios()
+      
+      // プレビューを更新（正規化後のタグを使用）
+      const updatedScenario = mockDataService.getScenario(selectedScenario.id)
+      if (updatedScenario) {
+        const normalizedTags = updatedScenario.tags || []
+        const tagContent = normalizedTags.length > 0
+          ? normalizedTags.map(t => `# ${t}`).join('\n\n')
+          : '# main'
         setTagPreview(tagContent)
       }
     }
@@ -1430,10 +1450,30 @@ const DashboardPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <div className="px-5 py-4">
-                  <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-100 to-orange-100 rounded-xl border border-amber-200/50">
-                    <span className="text-sm font-bold text-amber-700">main</span>
-                  </div>
+                <div className="px-5 py-4 flex items-center gap-3 flex-wrap">
+                  <span className="text-sm font-bold text-slate-700">タグ</span>
+                  {selectedScenario ? (
+                    (() => {
+                      // 重複を排除してタグを表示
+                      const uniqueTags = Array.from(new Set((selectedScenario.tags || []).filter(tag => tag && tag.trim().length > 0)))
+                      if (uniqueTags.length === 0) {
+                        return (
+                          <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-100 to-orange-100 rounded-xl border border-amber-200/50">
+                            <span className="text-sm font-bold text-amber-700">main</span>
+                          </div>
+                        )
+                      }
+                      return uniqueTags.map((tag, index) => (
+                        <div key={`tag-${index}-${tag}`} className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-100 to-orange-100 rounded-xl border border-amber-200/50">
+                          <span className="text-sm font-bold text-amber-700">{tag}</span>
+                        </div>
+                      ))
+                    })()
+                  ) : (
+                    <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-100 to-orange-100 rounded-xl border border-amber-200/50">
+                      <span className="text-sm font-bold text-amber-700">main</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
